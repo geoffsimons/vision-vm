@@ -47,6 +47,10 @@ RUN playwright install-deps \
 COPY entrypoint.sh capture_heartbeat.py streaming_server.py reset-chrome.sh ./
 RUN chmod +x entrypoint.sh reset-chrome.sh
 
+# ── Fluxbox (no toolbar, no window decorations) ────────────────────────────
+RUN mkdir -p ~/.fluxbox
+COPY fluxbox-init /root/.fluxbox/init
+
 RUN mkdir -p /captures
 
 # ── VNC password file ────────────────────────────────────────────────────────

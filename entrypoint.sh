@@ -45,6 +45,7 @@ google-chrome-stable \
     --remote-debugging-address=127.0.0.1 \
     --no-sandbox \
     --disable-dev-shm-usage \
+    --test-type \
     --start-fullscreen \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
@@ -56,7 +57,7 @@ google-chrome-stable \
     --disable-session-crashed-bubble \
     --disable-infobars \
     --noerrdialogs \
-    "https://www.youtube.com" &
+    --app=https://www.youtube.com &
 sleep 3
 
 # ── PNG streaming server (TCP :5555, background) ────────────────────────────

@@ -93,6 +93,10 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     # Attempt to start playback
     _ensure_playback(page)
 
+    # Click the video player to ensure keyboard focus in App Mode
+    page.click("video", timeout=5000)
+    time.sleep(0.5)
+
     # Engage YouTube's native fullscreen via keyboard shortcut
     page.keyboard.press("f")
     time.sleep(1)
