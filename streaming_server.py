@@ -1,7 +1,7 @@
 """Lossless Streaming Sensor – PNG-over-TCP server.
 
-Captures display :99 via mss, encodes each frame as lossless PNG,
-and streams them to connected TCP clients on port 5555.
+Captures display :99 via mss, encodes each frame as lossless PNG
+using OpenCV, and streams them to connected TCP clients on port 5555.
 
 Wire protocol (per frame):
   [8 bytes] – payload length as unsigned 64-bit big-endian integer
@@ -13,9 +13,11 @@ import socket
 import struct
 import threading
 import time
+from typing import List
 
+import cv2
 import mss
-import mss.tools
+import numpy as np
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -27,14 +29,23 @@ TARGET_FPS: int = int(os.environ.get("STREAM_FPS", "30"))
 HEADER_FMT: str = "!Q"  # 8-byte unsigned long long, big-endian
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 
+# OpenCV PNG compression: 0 = no compression (fastest), 9 = max compression.
+# Level 1 gives a good speed/size trade-off for streaming.
+PNG_PARAMS: List[int] = [cv2.IMWRITE_PNG_COMPRESSION, 1]
+
 
 # ── Frame capture ────────────────────────────────────────────────────────────
 
 def capture_png(sct: mss.mss, monitor: dict) -> bytes:
-    """Grab a single frame and return it as PNG bytes."""
+    """Grab a single frame and return lossless PNG bytes via OpenCV."""
     frame = sct.grab(monitor)
-    png_bytes: bytes = mss.tools.to_png(frame.rgb, frame.size)
-    return png_bytes
+    # mss returns BGRA; convert to a NumPy array and drop the alpha channel
+    img: np.ndarray = np.array(frame, dtype=np.uint8)
+    bgr: np.ndarray = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    success, png_buf = cv2.imencode(".png", bgr, PNG_PARAMS)
+    if not success:
+        raise RuntimeError("cv2.imencode failed to produce PNG")
+    return png_buf.tobytes()
 
 
 # ── Client handler ───────────────────────────────────────────────────────────

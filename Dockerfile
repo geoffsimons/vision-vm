@@ -40,8 +40,8 @@ RUN pip install --no-cache-dir \
         numpy \
         playwright
 
-# Install Playwright Chromium browser binaries + OS deps
-RUN playwright install --with-deps chromium
+# Playwright OS-level deps only (we CDP into the existing Chrome)
+RUN playwright install-deps
 
 # ── Application layout ──────────────────────────────────────────────────────
 WORKDIR /app

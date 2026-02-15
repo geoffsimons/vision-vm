@@ -31,16 +31,16 @@ def connect_browser() -> Browser:
     return browser
 
 
-def load_youtube_video(url: str, browser: Optional[Browser] = None) -> Page:
-    """Navigate to a YouTube URL and ensure playback begins.
+def load_video(url: str, browser: Optional[Browser] = None) -> Page:
+    """Navigate to a YouTube URL and ensure the player starts.
 
     Parameters
     ----------
     url : str
         Full YouTube video URL.
     browser : Browser, optional
-        Existing Playwright browser handle. A new connection is created
-        when *None*.
+        Existing Playwright browser handle.  A new connection is
+        created when *None*.
 
     Returns
     -------
@@ -95,7 +95,6 @@ def _dismiss_consent(page: Page) -> None:
 
 def _ensure_playback(page: Page) -> None:
     """Make sure the <video> element is actually playing."""
-    # Click the video element to trigger play if paused
     try:
         page.evaluate("""
             () => {
@@ -131,7 +130,7 @@ def main() -> None:
     url: str = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
     print(f"[CTRL] Target: {url}", flush=True)
 
-    page: Page = load_youtube_video(url)
+    page: Page = load_video(url)
 
     print("[CTRL] Controller active. Press Ctrl-C to exit.", flush=True)
     try:
