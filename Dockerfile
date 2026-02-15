@@ -33,18 +33,16 @@ RUN wget -qO - https://dl.google.com/linux/linux_signing_key.pub \
     && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python packages ──────────────────────────────────────────────────────────
-RUN pip install --no-cache-dir \
-        mss \
-        opencv-python-headless \
-        numpy \
-        playwright
+# ── Python packages (from shared requirements.txt) ─────────────────────────
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Playwright OS-level deps only (we CDP into the existing Chrome)
-RUN playwright install-deps
+# ── Playwright (OS deps + Chromium binary) ─────────────────────────────────
+RUN playwright install-deps \
+    && playwright install chromium
 
 # ── Application layout ──────────────────────────────────────────────────────
-WORKDIR /app
 COPY entrypoint.sh capture_heartbeat.py streaming_server.py reset-chrome.sh ./
 RUN chmod +x entrypoint.sh reset-chrome.sh
 
