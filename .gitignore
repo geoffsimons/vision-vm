@@ -1,0 +1,19 @@
+# --- Project Specifics ---
+# Do not commit the frames we capture
+captures/*.png
+captures/
+
+# Do not commit your private Chrome session/cookies
+chrome-data/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# --- Docker & OS ---
+.DS_Store
+*.log
