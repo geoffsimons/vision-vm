@@ -12,11 +12,11 @@ sleep 5
 export DISPLAY=:99
 
 # ── VNC server ────────────────────────────────────────────────────────────────
-x11vnc -display :99 -forever -nopw -listen 0.0.0.0 -rfbport 5900 &
+x11vnc -display :99 -forever -nopw -shared -rfbport 5900 -listen 0.0.0.0 &
 
 # ── Fluxbox (window manager) ─────────────────────────────────────────────────
 fluxbox &
-sleep 1
+sleep 5
 
 # ── Google Chrome ────────────────────────────────────────────────────────────
 google-chrome-stable \
