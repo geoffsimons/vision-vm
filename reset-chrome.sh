@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── X11 lock file cleanup ───────────────────────────────────────────────────
+# Removes stale X server lock files from a previous run so Xvfb can bind :99
+# without a "Display already in use" error.
+
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+
+echo "[MAINTENANCE] Cleared X11 lock files for display 99."
+
 # ── Chrome profile lock cleanup ──────────────────────────────────────────────
 # Removes stale lock files left behind by previous container runs or hostname
 # changes, allowing Chrome to start cleanly with the persisted profile.

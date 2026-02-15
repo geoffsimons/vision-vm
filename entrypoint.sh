@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── Chrome profile maintenance ────────────────────────────────────────────────
+# ── Cleanup trap ─────────────────────────────────────────────────────────────
+# On SIGTERM/SIGINT, remove X11 lock files so the next container start is clean.
+cleanup() {
+    echo "[SHUTDOWN] Removing X11 lock files for display 99..."
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+}
+trap cleanup SIGTERM SIGINT
+
+# ── Pre-launch cleanup (must run before Xvfb) ────────────────────────────────
 ./reset-chrome.sh
 
 # ── D-Bus session ────────────────────────────────────────────────────────────
