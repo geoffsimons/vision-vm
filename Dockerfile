@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2 \
         libatk-bridge2.0-0 \
         libgtk-3-0 \
+        libvncserver-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Google Chrome (stable, official repo) ────────────────────────────────────
@@ -36,11 +37,15 @@ RUN wget -qO - https://dl.google.com/linux/linux_signing_key.pub \
 RUN pip install --no-cache-dir \
         mss \
         opencv-python-headless \
-        numpy
+        numpy \
+        playwright
+
+# Install Playwright Chromium browser binaries + OS deps
+RUN playwright install --with-deps chromium
 
 # ── Application layout ──────────────────────────────────────────────────────
 WORKDIR /app
-COPY entrypoint.sh capture_heartbeat.py reset-chrome.sh ./
+COPY entrypoint.sh capture_heartbeat.py streaming_server.py reset-chrome.sh ./
 RUN chmod +x entrypoint.sh reset-chrome.sh
 
 RUN mkdir -p /captures
