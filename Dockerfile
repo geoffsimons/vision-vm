@@ -40,10 +40,13 @@ RUN pip install --no-cache-dir \
 
 # ── Application layout ──────────────────────────────────────────────────────
 WORKDIR /app
-COPY entrypoint.sh capture_heartbeat.py ./
-RUN chmod +x entrypoint.sh
+COPY entrypoint.sh capture_heartbeat.py reset-chrome.sh ./
+RUN chmod +x entrypoint.sh reset-chrome.sh
 
 RUN mkdir -p /captures
+
+# ── VNC password file ────────────────────────────────────────────────────────
+RUN mkdir -p ~/.vnc && x11vnc -storepasswd vision ~/.vnc/passwd
 
 ENV DISPLAY=:99
 ENV CHROME_USER_DATA=/chrome-data

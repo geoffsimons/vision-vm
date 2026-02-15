@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Chrome profile maintenance ────────────────────────────────────────────────
+./reset-chrome.sh
+
 # ── D-Bus session ────────────────────────────────────────────────────────────
 eval "$(dbus-launch --sh-syntax)"
 export DBUS_SESSION_BUS_ADDRESS
@@ -12,7 +15,7 @@ sleep 5
 export DISPLAY=:99
 
 # ── VNC server ────────────────────────────────────────────────────────────────
-x11vnc -display :99 -forever -nopw -shared -rfbport 5900 -listen 0.0.0.0 &
+x11vnc -display :99 -forever -shared -rfbauth ~/.vnc/passwd -listen 0.0.0.0 -rfbport 5900 &
 
 # ── Fluxbox (window manager) ─────────────────────────────────────────────────
 fluxbox &
