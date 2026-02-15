@@ -50,6 +50,20 @@ def resize_viewport(
     )
 
 
+def wait_for_player_ready(page: Page, timeout: int = 15000) -> None:
+    """Block until the YouTube HTML5 player element is present.
+
+    Parameters
+    ----------
+    page : Page
+        Active Playwright page.
+    timeout : int
+        Maximum wait time in milliseconds.
+    """
+    page.wait_for_selector(".html5-video-player", timeout=timeout)
+    print("[CTRL] YouTube player (.html5-video-player) is ready.", flush=True)
+
+
 def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     """Navigate to a YouTube URL and ensure the player starts.
 
@@ -93,14 +107,20 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     # Attempt to start playback
     _ensure_playback(page)
 
+    # Suppress autoplay to prevent unexpected redirects
+    _suppress_autoplay(page)
+
+    # Wait for the full YouTube player shell before sending keys
+    wait_for_player_ready(page)
+
     # Click the video player to ensure keyboard focus in App Mode
     page.click("video", timeout=5000)
     time.sleep(0.5)
 
-    # Engage YouTube's native fullscreen via keyboard shortcut
-    page.keyboard.press("f")
+    # Engage YouTube Theater Mode via keyboard shortcut
+    page.keyboard.press("t")
     time.sleep(1)
-    print("[CTRL] YouTube fullscreen engaged via 'f' key.", flush=True)
+    print("[CTRL] YouTube Theater Mode engaged via 't' key.", flush=True)
 
     print("[CTRL] Video playback confirmed.", flush=True)
     return page
@@ -154,6 +174,30 @@ def _ensure_playback(page: Page) -> None:
         )
 
 
+def _suppress_autoplay(page: Page) -> None:
+    """Disable YouTube's autoplay toggle if it is currently enabled."""
+    try:
+        toggled_off: bool = page.evaluate("""
+            () => {
+                const btn = document.querySelector(
+                    'button.ytp-button[data-tooltip-target-id='
+                    + '"ytp-autonav-toggle-button"]'
+                );
+                if (!btn) return false;
+                const isOn = btn.getAttribute('aria-checked') === 'true'
+                    || btn.classList.contains('ytp-autonav-toggle-button-active');
+                if (isOn) { btn.click(); return true; }
+                return false;
+            }
+        """)
+        if toggled_off:
+            print("[CTRL] Autoplay toggled OFF.", flush=True)
+        else:
+            print("[CTRL] Autoplay already off (or toggle not found).", flush=True)
+    except Exception:
+        print("[CTRL] Could not access autoplay toggle.", flush=True)
+
+
 # ── Playback introspection ───────────────────────────────────────────────────
 
 def get_playback_state(page: Page) -> str:
@@ -179,6 +223,33 @@ def get_playback_state(page: Page) -> str:
     return state
 
 
+# ── Monitoring ───────────────────────────────────────────────────────────────
+
+def monitor_playback(page: Page, interval: float = 5.0) -> None:
+    """Poll the page URL and log when YouTube auto-navigates.
+
+    Parameters
+    ----------
+    page : Page
+        Active Playwright page to monitor.
+    interval : float
+        Seconds between each check (default 5).
+    """
+    last_url: str = page.url
+    print(f"[MONITOR] Watching URL: {last_url}", flush=True)
+
+    while True:
+        time.sleep(interval)
+        current_url: str = page.url
+        if current_url != last_url:
+            print(
+                f"[AUTO-PLAY] Redirect detected! Adjusting... "
+                f"{last_url} -> {current_url}",
+                flush=True,
+            )
+            last_url = current_url
+
+
 # ── CLI entrypoint ───────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -190,8 +261,7 @@ def main() -> None:
 
     print("[CTRL] Controller active. Press Ctrl-C to exit.", flush=True)
     try:
-        while True:
-            time.sleep(5)
+        monitor_playback(page)
     except KeyboardInterrupt:
         print("\n[CTRL] Exiting.", flush=True)
 
