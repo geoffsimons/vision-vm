@@ -57,18 +57,25 @@ def recv_frame(sock: socket.socket) -> bytes:
 
 # ── Display ──────────────────────────────────────────────────────────────────
 
-def overlay_fps(frame: np.ndarray, fps: float) -> np.ndarray:
-    """Draw the current FPS value onto the top-left corner of *frame*."""
-    text: str = f"FPS: {fps:.1f}"
+def overlay_diagnostics(
+    frame: np.ndarray,
+    fps: float,
+    size_bytes: int,
+) -> np.ndarray:
+    """Draw resolution, data size, and FPS onto the top-left of *frame*."""
+    h: int = frame.shape[0]
+    w: int = frame.shape[1]
+    size_mb: float = size_bytes / (1024.0 * 1024.0)
+    text: str = f"Resolution: {w}x{h} | Size: {size_mb:.2f}MB | FPS: {fps:.1f}"
+    # Black outline for contrast
     cv2.putText(
-        frame,
-        text,
-        (10, 36),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.2,
-        (0, 255, 0),
-        2,
-        cv2.LINE_AA,
+        frame, text, (10, 36),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3, cv2.LINE_AA,
+    )
+    # Green foreground
+    cv2.putText(
+        frame, text, (10, 36),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA,
     )
     return frame
 
@@ -106,7 +113,7 @@ def run(host: str, port: int) -> None:
                 if elapsed > 0:
                     fps = (len(timestamps) - 1) / elapsed
 
-            overlay_fps(frame, fps)
+            overlay_diagnostics(frame, fps, len(png_data))
             cv2.imshow(WINDOW_NAME, frame)
 
             # 'q' to quit; waitKey(1) keeps the GUI responsive

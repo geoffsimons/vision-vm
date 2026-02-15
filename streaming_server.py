@@ -121,9 +121,11 @@ def serve() -> None:
     with mss.mss(display=DISPLAY) as probe:
         monitor: dict = probe.monitors[0]
 
+    width: int = monitor["width"]
+    height: int = monitor["height"]
     print(
         f"[STREAM] Serving PNG frames on {HOST}:{PORT}  "
-        f"(display={DISPLAY}, monitor={monitor})",
+        f"(display={DISPLAY}, {width}x{height}, monitor={monitor})",
         flush=True,
     )
 
