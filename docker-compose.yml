@@ -3,6 +3,8 @@ services:
     build: .
     environment:
       - DISPLAY=:99
+    ports:
+      - "5900:5900"
     volumes:
       - ./captures:/captures
-      - ./chrome-data:/root/.config/google-chrome
+      - ./chrome-data:/chrome-data

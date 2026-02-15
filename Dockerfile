@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fluxbox \
         dbus-x11 \
         x11vnc \
+        net-tools \
         libnss3 \
         libgconf-2-4 \
         libxi6 \
@@ -45,5 +46,6 @@ RUN chmod +x entrypoint.sh
 RUN mkdir -p /captures
 
 ENV DISPLAY=:99
+ENV CHROME_USER_DATA=/chrome-data
 
 ENTRYPOINT ["./entrypoint.sh"]
