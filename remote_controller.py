@@ -79,7 +79,7 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
         page = context.new_page()
 
     print(f"[CTRL] Navigating to {url}", flush=True)
-    page.goto(url, wait_until="domcontentloaded")
+    page.goto(url, wait_until="networkidle")
 
     # Wait for the YouTube player to be present
     page.wait_for_selector("video", timeout=15000)
@@ -92,6 +92,11 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
 
     # Attempt to start playback
     _ensure_playback(page)
+
+    # Engage YouTube's native fullscreen via keyboard shortcut
+    page.keyboard.press("f")
+    time.sleep(1)
+    print("[CTRL] YouTube fullscreen engaged via 'f' key.", flush=True)
 
     print("[CTRL] Video playback confirmed.", flush=True)
     return page
@@ -143,6 +148,31 @@ def _ensure_playback(page: Page) -> None:
             "Check the VM display for consent dialogs.",
             flush=True,
         )
+
+
+# ── Playback introspection ───────────────────────────────────────────────────
+
+def get_playback_state(page: Page) -> str:
+    """Query the YouTube player for its current playback state.
+
+    Returns
+    -------
+    str
+        One of ``'playing'``, ``'paused'``, or ``'ad'``.
+    """
+    state: str = page.evaluate("""
+        () => {
+            const v = document.querySelector('video');
+            if (!v) return 'paused';
+
+            const adOverlay = document.querySelector('.ad-showing');
+            if (adOverlay) return 'ad';
+
+            if (!v.paused && !v.ended && v.readyState > 2) return 'playing';
+            return 'paused';
+        }
+    """)
+    return state
 
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────────

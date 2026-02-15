@@ -28,12 +28,14 @@ sleep 5
 
 # ── Google Chrome ────────────────────────────────────────────────────────────
 google-chrome-stable \
+    --remote-debugging-port=9222 \
+    --remote-debugging-address=0.0.0.0 \
     --no-sandbox \
     --disable-dev-shm-usage \
-    --start-maximized \
+    --start-fullscreen \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
-    --remote-debugging-port=9222 \
+    --force-device-scale-factor=1 \
     --user-data-dir="$CHROME_USER_DATA" \
     --no-first-run \
     --no-default-browser-check \

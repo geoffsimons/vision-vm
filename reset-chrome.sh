@@ -14,15 +14,22 @@ find "$CHROME_DIR" -name '.parentlock' -delete 2>/dev/null || true
 echo "[MAINTENANCE] Stale Chrome locks cleared."
 
 # ── Chrome exit-state reset ──────────────────────────────────────────────────
-# Rewrites the Preferences file so Chrome believes it shut down cleanly,
-# suppressing the "Chrome didn't shut down correctly" restoration bubble.
+# Patches both the profile-level Preferences and the browser-level Local State
+# so Chrome believes it shut down cleanly, suppressing all restoration bubbles.
 
-PREFS_FILE=$(find "$CHROME_DIR" -name 'Preferences' -path '*/Default/*' 2>/dev/null | head -n 1)
+PATCHED=0
 
-if [ -n "$PREFS_FILE" ]; then
-    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g' "$PREFS_FILE"
-    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/g' "$PREFS_FILE"
-    echo "[MAINTENANCE] Chrome exit state reset to 'Normal'."
+for TARGET in "Preferences" "Local State"; do
+    MATCH=$(find "$CHROME_DIR" -name "$TARGET" 2>/dev/null | head -n 1)
+    if [ -n "$MATCH" ]; then
+        sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g' "$MATCH"
+        sed -i 's/"exited_cleanly":false/"exited_cleanly":true/g' "$MATCH"
+        PATCHED=$((PATCHED + 1))
+    fi
+done
+
+if [ "$PATCHED" -gt 0 ]; then
+    echo "[MAINTENANCE] Force-cleared Chrome crash state."
 else
-    echo "[MAINTENANCE] No Preferences file found; skipping exit-state reset."
+    echo "[MAINTENANCE] No profile files found; skipping exit-state reset."
 fi
