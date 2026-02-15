@@ -26,10 +26,15 @@ x11vnc -display :99 -forever -shared -rfbauth ~/.vnc/passwd -listen 0.0.0.0 -rfb
 fluxbox &
 sleep 5
 
+# ── socat CDP relay (external :9222 → Chrome :9223) ─────────────────────────
+# Chrome binds its DevTools socket to 127.0.0.1 only.  socat listens on all
+# interfaces so the host Mac can reach CDP through the published Docker port.
+socat TCP-LISTEN:9222,fork,reuseaddr TCP:127.0.0.1:9223 &
+
 # ── Google Chrome ────────────────────────────────────────────────────────────
 google-chrome-stable \
-    --remote-debugging-port=9222 \
-    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-port=9223 \
+    --remote-debugging-address=127.0.0.1 \
     --no-sandbox \
     --disable-dev-shm-usage \
     --start-fullscreen \
