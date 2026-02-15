@@ -1,0 +1,8 @@
+services:
+  vision-vm:
+    build: .
+    environment:
+      - DISPLAY=:99
+    volumes:
+      - ./captures:/captures
+      - ./chrome-data:/root/.config/google-chrome
