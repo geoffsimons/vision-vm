@@ -38,6 +38,9 @@ google-chrome-stable \
     --no-first-run \
     --no-default-browser-check \
     --password-store=basic \
+    --disable-session-crashed-bubble \
+    --disable-infobars \
+    --noerrdialogs \
     "https://www.youtube.com" &
 sleep 3
 
