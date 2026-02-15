@@ -19,6 +19,8 @@ from playwright.sync_api import Browser, Page, sync_playwright
 
 CDP_ENDPOINT: str = "http://localhost:9222"
 DEFAULT_URL: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+DEFAULT_WIDTH: int = 1280
+DEFAULT_HEIGHT: int = 720
 
 
 # ── Core helpers ─────────────────────────────────────────────────────────────
@@ -29,6 +31,23 @@ def connect_browser() -> Browser:
     browser: Browser = pw.chromium.connect_over_cdp(CDP_ENDPOINT)
     print(f"[CTRL] Connected to Chrome via CDP at {CDP_ENDPOINT}", flush=True)
     return browser
+
+
+def resize_viewport(
+    page: Page,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+) -> None:
+    """Set the browser viewport to the given dimensions.
+
+    Ensures the rendered content fills the virtual display edge-to-edge
+    regardless of the Xvfb resolution.
+    """
+    page.set_viewport_size({"width": width, "height": height})
+    print(
+        f"[CTRL] Viewport resized to {width}x{height}",
+        flush=True,
+    )
 
 
 def load_video(url: str, browser: Optional[Browser] = None) -> Page:
@@ -64,6 +83,9 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
 
     # Wait for the YouTube player to be present
     page.wait_for_selector("video", timeout=15000)
+
+    # Lock viewport to the target resolution
+    resize_viewport(page)
 
     # Dismiss consent dialogs if they appear
     _dismiss_consent(page)

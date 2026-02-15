@@ -117,15 +117,31 @@ def serve() -> None:
     The accept loop runs without holding an mss handle; each client
     thread creates its own inside *handle_client*.
     """
-    # Quick probe to log the monitor geometry, then release the handle.
+    # Quick probe to log and validate the monitor geometry.
     with mss.mss(display=DISPLAY) as probe:
         monitor: dict = probe.monitors[0]
 
     width: int = monitor["width"]
     height: int = monitor["height"]
+
+    if width <= 0 or height <= 0:
+        raise RuntimeError(
+            f"Invalid monitor dimensions {width}x{height} – "
+            "is Xvfb running on the expected DISPLAY?"
+        )
+
+    expected_w: int = int(os.environ.get("WIDTH", "0"))
+    expected_h: int = int(os.environ.get("HEIGHT", "0"))
+    if expected_w and expected_h and (width != expected_w or height != expected_h):
+        print(
+            f"[STREAM] WARNING: Detected {width}x{height} but "
+            f"expected {expected_w}x{expected_h} from env",
+            flush=True,
+        )
+
     print(
         f"[STREAM] Serving PNG frames on {HOST}:{PORT}  "
-        f"(display={DISPLAY}, {width}x{height}, monitor={monitor})",
+        f"(display={DISPLAY}, {width}x{height})",
         flush=True,
     )
 

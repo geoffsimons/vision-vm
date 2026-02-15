@@ -8,8 +8,13 @@ set -euo pipefail
 eval "$(dbus-launch --sh-syntax)"
 export DBUS_SESSION_BUS_ADDRESS
 
+# ── Display geometry (from environment, with defaults) ───────────────────────
+WIDTH="${WIDTH:-1280}"
+HEIGHT="${HEIGHT:-720}"
+DEPTH="${DEPTH:-24}"
+
 # ── Xvfb (virtual framebuffer on :99) ───────────────────────────────────────
-Xvfb :99 -screen 0 1920x1080x24 &
+Xvfb :99 -screen 0 "${WIDTH}x${HEIGHT}x${DEPTH}" &
 sleep 5
 
 export DISPLAY=:99
@@ -26,6 +31,8 @@ google-chrome-stable \
     --no-sandbox \
     --disable-dev-shm-usage \
     --start-maximized \
+    --window-size="${WIDTH},${HEIGHT}" \
+    --window-position=0,0 \
     --remote-debugging-port=9222 \
     --user-data-dir="$CHROME_USER_DATA" \
     --no-first-run \

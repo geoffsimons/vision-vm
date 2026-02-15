@@ -3,6 +3,9 @@ services:
     build: .
     environment:
       - DISPLAY=:99
+      - WIDTH=1280
+      - HEIGHT=720
+      - DEPTH=24
     ports:
       - "5555:5555"
       - "5900:5900"
