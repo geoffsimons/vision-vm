@@ -119,3 +119,9 @@ Ensure the `streaming_server.py` is fully initialized. Check logs:
 docker compose logs streaming_server
 ```
 If the issue persists, verify that the `socat` bridge or the Python process hasn't exited prematurely.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
