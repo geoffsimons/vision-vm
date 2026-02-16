@@ -9,12 +9,15 @@ Usage (from the Mac host):
 Press 'q' in the preview window to quit.
 """
 
+import argparse
+import json
 import socket
 import struct
 import sys
+import threading
 import time
 from collections import deque
-from typing import Deque, Tuple
+from typing import Deque, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -23,6 +26,7 @@ import numpy as np
 
 DEFAULT_HOST: str = "localhost"
 DEFAULT_PORT: int = 5555
+DEFAULT_MGMT_PORT: int = 5556
 
 HEADER_FMT: str = "!Qd"  # 8-byte length (Q) + 8-byte double (d) for timestamp
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
@@ -32,6 +36,34 @@ WINDOW_BASE_NAME: str = "Vision VM Stream"
 
 # Rolling window for FPS calculation (last N frame timestamps)
 FPS_WINDOW: int = 60
+
+# Global state for status updates
+video_duration: float = 0.0
+video_status: str = "unknown"
+_status_lock: threading.Lock = threading.Lock()
+
+
+# ── Status Polling ───────────────────────────────────────────────────────────
+
+def poll_status(host: str, port: int) -> None:
+    """Periodically query the VM management port for duration and status."""
+    global video_duration, video_status
+    while True:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(2.0)
+                sock.connect((host, port))
+                sock.sendall(json.dumps({"command": "status"}).encode("utf-8"))
+                resp = sock.recv(4096)
+                if resp:
+                    data = json.loads(resp.decode("utf-8"))
+                    region = data.get("capture_region", {})
+                    with _status_lock:
+                        video_duration = float(region.get("duration", 0.0))
+                        video_status = region.get("video_status", "playing")
+        except Exception:
+            pass
+        time.sleep(1.0)
 
 
 # ── Network helpers ──────────────────────────────────────────────────────────
@@ -69,9 +101,19 @@ def overlay_diagnostics(
     h: int = frame.shape[0]
     w: int = frame.shape[1]
     size_mb: float = size_bytes / (1024.0 * 1024.0)
+
+    with _status_lock:
+        duration = video_duration
+        status = video_status
+
+    progress_text = ""
+    if duration > 0:
+        pct = (timestamp / duration) * 100
+        progress_text = f" | Progress: {timestamp:.1f}/{duration:.1f}s ({pct:.1f}%)"
+
     text: str = (
         f"Res: {w}x{h} | {size_mb:.2f}MB | {fps:.1f} FPS | "
-        f"TS: {timestamp:.2f}s"
+        f"Status: {status}{progress_text}"
     )
     # Black outline for contrast
     cv2.putText(
@@ -88,9 +130,13 @@ def overlay_diagnostics(
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
-def run(host: str, port: int) -> None:
+def run(host: str, port: int, mgmt_port: int, auto_close: bool) -> None:
     """Connect to the streaming server and display frames."""
     print(f"[VERIFY] Connecting to {host}:{port} …", flush=True)
+
+    # Start status polling thread
+    poll_thread = threading.Thread(target=poll_status, args=(host, mgmt_port), daemon=True)
+    poll_thread.start()
 
     sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((host, port))
@@ -112,6 +158,13 @@ def run(host: str, port: int) -> None:
             if frame is None:
                 print("[VERIFY] WARNING: failed to decode frame", flush=True)
                 continue
+
+            # Check for auto-close
+            if auto_close:
+                with _status_lock:
+                    if video_status == "complete":
+                        print("[VERIFY] Video complete. Auto-closing...", flush=True)
+                        break
 
             # Calculate rolling FPS
             fps: float = 0.0
@@ -150,13 +203,39 @@ def run(host: str, port: int) -> None:
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────────
 
-def _parse_args() -> Tuple[str, int]:
-    """Return (host, port) from positional CLI args."""
-    host: str = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HOST
-    port: int = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_PORT
-    return host, port
+def main() -> None:
+    """Parse args and run the verification client."""
+    parser = argparse.ArgumentParser(
+        description="Verify Stream – PNG-over-TCP client with live preview.",
+    )
+    parser.add_argument(
+        "host",
+        nargs="?",
+        default=DEFAULT_HOST,
+        help="Streaming server host (default: %(default)s)",
+    )
+    parser.add_argument(
+        "port",
+        type=int,
+        nargs="?",
+        default=DEFAULT_PORT,
+        help="Streaming server port (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--mgmt-port",
+        type=int,
+        default=DEFAULT_MGMT_PORT,
+        help="Management port for status queries (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--auto-close",
+        action="store_true",
+        help="Automatically close the window when video_status is 'complete'",
+    )
+    args = parser.parse_args()
+
+    run(args.host, args.port, args.mgmt_port, args.auto_close)
 
 
 if __name__ == "__main__":
-    h, p = _parse_args()
-    run(h, p)
+    main()

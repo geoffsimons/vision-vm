@@ -165,6 +165,15 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     # Inject CSS to suppress residual YouTube UI chrome
     _inject_ui_cleanup(page)
 
+    # Query video duration and sync to VM
+    try:
+        duration = float(page.evaluate("document.querySelector('video').duration"))
+        if duration:
+            print(f"[CTRL] Detected video duration: {duration:.2f}s", flush=True)
+            set_duration(duration)
+    except Exception as exc:
+        print(f"[CTRL] Could not query duration: {exc}", flush=True)
+
     print("[CTRL] Video playback confirmed.", flush=True)
     return page
 
@@ -342,6 +351,7 @@ def send_region_update(
 def update_telemetry(
     current_time: float,
     is_ended: bool,
+    video_status: Optional[str] = None,
     host: str = VM_HOST,
     port: int = ROI_PORT,
 ) -> None:
@@ -351,6 +361,9 @@ def update_telemetry(
         "current_time": current_time,
         "is_ended": is_ended,
     }
+    if video_status:
+        payload["video_status"] = video_status
+
     data: bytes = json.dumps(payload).encode("utf-8")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -361,6 +374,27 @@ def update_telemetry(
             # No need to wait for response for high-frequency telemetry
         except Exception as exc:
             print(f"[CTRL] Failed to sync telemetry: {exc}", flush=True)
+
+
+def set_duration(
+    duration: float,
+    host: str = VM_HOST,
+    port: int = ROI_PORT,
+) -> None:
+    """Push the video duration to the VM's command server."""
+    payload: dict = {
+        "command": "set_duration",
+        "duration": duration,
+    }
+    data: bytes = json.dumps(payload).encode("utf-8")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.settimeout(2.0)
+            sock.connect((host, port))
+            sock.sendall(data)
+        except Exception as exc:
+            print(f"[CTRL] Failed to sync duration: {exc}", flush=True)
 
 
 def get_vm_status(
@@ -478,6 +512,13 @@ def monitor_playback(
     last_url: str = page.url
     print(f"[MONITOR] Watching URL: {last_url}", flush=True)
 
+    video_status = "playing"
+    duration = 0.0
+    try:
+        duration = float(page.evaluate("document.querySelector('video').duration"))
+    except:
+        pass
+
     while True:
         time.sleep(interval)
 
@@ -485,14 +526,25 @@ def monitor_playback(
         try:
             telemetry = page.evaluate(
                 "() => ({ time: document.querySelector('video').currentTime, "
+                "duration: document.querySelector('video').duration, "
                 "ended: document.querySelector('video').ended })"
             )
             v_time = float(telemetry.get("time", 0.0))
             v_ended = bool(telemetry.get("ended", False))
+            v_duration = float(telemetry.get("duration", 0.0))
+            
+            # Watchdog: check for clean-exit transition
+            if v_duration > 0 and v_time >= (v_duration - 1.0) and video_status != "complete":
+                print(f"[MONITOR] Near end of video ({v_time:.2f}/{v_duration:.2f}). Triggering clean exit.", flush=True)
+                page.evaluate("document.querySelector('video').pause()")
+                video_status = "complete"
+            
+            if v_ended and video_status != "complete":
+                video_status = "complete"
 
-            update_telemetry(v_time, v_ended, host=vm_host, port=roi_port)
+            update_telemetry(v_time, v_ended, video_status=video_status, host=vm_host, port=roi_port)
             print(
-                f"[MGMT] Syncing playhead: {v_time:.2f}s | Ended: {v_ended}",
+                f"[MGMT] Syncing playhead: {v_time:.2f}s / {v_duration:.2f}s | Status: {video_status}",
                 flush=True,
             )
         except Exception as exc:

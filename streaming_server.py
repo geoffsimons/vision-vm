@@ -48,7 +48,9 @@ capture_region: Dict[str, any] = {
     "width": 1280,
     "height": 720,
     "current_time": 0.0,
+    "duration": 0.0,
     "is_ended": False,
+    "video_status": "playing",
 }
 _region_lock: threading.Lock = threading.Lock()
 _last_roi_log: float = 0.0
@@ -120,10 +122,17 @@ def command_server() -> None:
                 print(f"[ROI_CMD] Successfully updated global state to: {new_region}", flush=True)
                 conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
 
+            elif cmd == "set_duration":
+                with _region_lock:
+                    capture_region["duration"] = float(msg.get("duration", 0.0))
+                conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
+
             elif cmd == "update_telemetry":
                 with _region_lock:
                     capture_region["current_time"] = float(msg.get("current_time", 0.0))
                     capture_region["is_ended"] = bool(msg.get("is_ended", False))
+                    if "video_status" in msg:
+                        capture_region["video_status"] = msg["video_status"]
                 conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
 
             conn.close()
