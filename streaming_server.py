@@ -92,6 +92,8 @@ def _roi_listener() -> None:
                 continue
 
             with _region_lock:
+                if new_region == capture_region:
+                    continue
                 capture_region.update(new_region)
 
             print(

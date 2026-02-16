@@ -237,12 +237,24 @@ def _suppress_autoplay(page: Page) -> None:
 
 # ── ROI helpers ──────────────────────────────────────────────────────────────
 
-def calculate_video_region(page: Page) -> Optional[Dict[str, int]]:
+def calculate_video_region(
+    page: Page,
+    *,
+    quiet: bool = False,
+) -> Optional[Dict[str, int]]:
     """Detect the bounding box of the YouTube video element.
 
     Uses Playwright's ``bounding_box()`` on the ``#movie_player video``
     locator to determine the exact pixel coordinates of the active video
     area within the virtual display.
+
+    Parameters
+    ----------
+    page : Page
+        Active Playwright page.
+    quiet : bool
+        When *True*, suppress informational log lines.  Used by the
+        periodic monitor loop to avoid log spam.
 
     Returns
     -------
@@ -255,10 +267,11 @@ def calculate_video_region(page: Page) -> Optional[Dict[str, int]]:
         locator.wait_for(state="visible", timeout=10000)
         box = locator.bounding_box()
         if box is None:
-            print(
-                "[CTRL] Could not resolve video bounding box.",
-                flush=True,
-            )
+            if not quiet:
+                print(
+                    "[CTRL] Could not resolve video bounding box.",
+                    flush=True,
+                )
             return None
 
         region: Dict[str, int] = {
@@ -267,10 +280,15 @@ def calculate_video_region(page: Page) -> Optional[Dict[str, int]]:
             "width": int(box["width"]),
             "height": int(box["height"]),
         }
-        print(f"[CTRL] Detected video region: {region}", flush=True)
+        if not quiet:
+            print(f"[CTRL] Detected video region: {region}", flush=True)
         return region
     except Exception as exc:
-        print(f"[CTRL] Video region detection failed: {exc}", flush=True)
+        if not quiet:
+            print(
+                f"[CTRL] Video region detection failed: {exc}",
+                flush=True,
+            )
         return None
 
 
@@ -357,8 +375,21 @@ def get_playback_state(page: Page) -> str:
 
 # ── Monitoring ───────────────────────────────────────────────────────────────
 
-def monitor_playback(page: Page, interval: float = 5.0) -> None:
-    """Poll the page URL and log when YouTube auto-navigates.
+def monitor_playback(
+    page: Page,
+    interval: float = 5.0,
+    *,
+    vm_host: str = VM_HOST,
+    roi_port: int = ROI_PORT,
+    last_region: Optional[Dict[str, int]] = None,
+) -> None:
+    """Poll the page URL and video region, logging changes.
+
+    Re-detects the video bounding box on every tick and sends an ROI
+    update to the VM only when the region has actually changed.  This
+    ensures the capture region persists across controller restarts
+    (the server is never told to reset) while still tracking layout
+    shifts during playback.
 
     Parameters
     ----------
@@ -366,12 +397,20 @@ def monitor_playback(page: Page, interval: float = 5.0) -> None:
         Active Playwright page to monitor.
     interval : float
         Seconds between each check (default 5).
+    vm_host : str
+        VM hostname for ROI updates.
+    roi_port : int
+        UDP port for ROI updates.
+    last_region : dict or None
+        The most recently sent region, used to suppress duplicate
+        updates.  Typically passed from ``main()``.
     """
     last_url: str = page.url
     print(f"[MONITOR] Watching URL: {last_url}", flush=True)
 
     while True:
         time.sleep(interval)
+
         current_url: str = page.url
         if current_url != last_url:
             print(
@@ -380,6 +419,19 @@ def monitor_playback(page: Page, interval: float = 5.0) -> None:
                 flush=True,
             )
             last_url = current_url
+
+        current_region: Optional[Dict[str, int]] = (
+            calculate_video_region(page, quiet=True)
+        )
+        if current_region is not None and current_region != last_region:
+            print(
+                f"[MONITOR] Video region changed: {current_region}",
+                flush=True,
+            )
+            send_region_update(
+                current_region, host=vm_host, port=roi_port,
+            )
+            last_region = current_region
 
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────────
@@ -445,7 +497,12 @@ def main() -> None:
 
     print("[CTRL] Controller active. Press Ctrl-C to exit.", flush=True)
     try:
-        monitor_playback(page)
+        monitor_playback(
+            page,
+            vm_host=args.vm_host,
+            roi_port=args.roi_port,
+            last_region=region,
+        )
     except KeyboardInterrupt:
         print("\n[CTRL] Exiting.", flush=True)
 
