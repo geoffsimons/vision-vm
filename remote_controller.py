@@ -89,6 +89,17 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     if browser is None:
         browser = connect_browser()
 
+    # Extract start time for logging
+    t_start = 0
+    if "t=" in url:
+        import re
+        match = re.search(r"[?&]t=(\d+)", url)
+        if match:
+            t_start = int(match.group(1))
+    
+    if t_start > 0:
+        print(f"[CTRL] Resuming video from {t_start}s", flush=True)
+
     # Ensure 't=' parameter for idempotent resume
     if "t=" not in url:
         sep = "&" if "?" in url else "?"
@@ -473,8 +484,8 @@ def monitor_playback(
         # 1. Telemetry Sync (Every 500ms)
         try:
             telemetry = page.evaluate(
-                "{ 'time': document.querySelector('video').currentTime, "
-                "'ended': document.querySelector('video').ended }"
+                "() => ({ time: document.querySelector('video').currentTime, "
+                "ended: document.querySelector('video').ended })"
             )
             v_time = float(telemetry.get("time", 0.0))
             v_ended = bool(telemetry.get("ended", False))
