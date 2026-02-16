@@ -8,9 +8,12 @@ Usage (from the Mac host):
     python remote_controller.py [youtube-url]
 """
 
+import argparse
+import json
+import socket
 import sys
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 from playwright.sync_api import Browser, Page, sync_playwright
 
@@ -21,6 +24,9 @@ CDP_ENDPOINT: str = "http://localhost:9222"
 DEFAULT_URL: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 DEFAULT_WIDTH: int = 1280
 DEFAULT_HEIGHT: int = 720
+
+VM_HOST: str = "localhost"
+ROI_PORT: int = 5556
 
 
 # ── Core helpers ─────────────────────────────────────────────────────────────
@@ -229,6 +235,101 @@ def _suppress_autoplay(page: Page) -> None:
         print("[CTRL] Could not access autoplay toggle.", flush=True)
 
 
+# ── ROI helpers ──────────────────────────────────────────────────────────────
+
+def calculate_video_region(page: Page) -> Optional[Dict[str, int]]:
+    """Detect the bounding box of the YouTube video element.
+
+    Uses Playwright's ``bounding_box()`` on the ``#movie_player video``
+    locator to determine the exact pixel coordinates of the active video
+    area within the virtual display.
+
+    Returns
+    -------
+    dict or None
+        ``{"top": int, "left": int, "width": int, "height": int}`` on
+        success, or *None* if the element cannot be located.
+    """
+    try:
+        locator = page.locator("#movie_player video")
+        locator.wait_for(state="visible", timeout=10000)
+        box = locator.bounding_box()
+        if box is None:
+            print(
+                "[CTRL] Could not resolve video bounding box.",
+                flush=True,
+            )
+            return None
+
+        region: Dict[str, int] = {
+            "top": int(box["y"]),
+            "left": int(box["x"]),
+            "width": int(box["width"]),
+            "height": int(box["height"]),
+        }
+        print(f"[CTRL] Detected video region: {region}", flush=True)
+        return region
+    except Exception as exc:
+        print(f"[CTRL] Video region detection failed: {exc}", flush=True)
+        return None
+
+
+def send_region_update(
+    region: Dict[str, int],
+    host: str = VM_HOST,
+    port: int = ROI_PORT,
+) -> None:
+    """Send a region_update command to the VM's ROI listener via UDP.
+
+    Parameters
+    ----------
+    region : dict
+        Must contain ``top``, ``left``, ``width``, ``height`` keys.
+    host : str
+        VM hostname or IP address.
+    port : int
+        UDP port the ROI listener is bound to.
+    """
+    payload: dict = {"command": "region_update", **region}
+    data: bytes = json.dumps(payload).encode("utf-8")
+
+    sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(data, (host, port))
+        print(
+            f"[CTRL] Sent region_update to {host}:{port} → {region}",
+            flush=True,
+        )
+    finally:
+        sock.close()
+
+
+def _parse_crop(crop_str: str) -> Dict[str, int]:
+    """Parse a ``X,Y,W,H`` crop string into an ROI dict.
+
+    Parameters
+    ----------
+    crop_str : str
+        Comma-separated values: ``left,top,width,height``.
+
+    Returns
+    -------
+    dict
+        ``{"top": int, "left": int, "width": int, "height": int}``
+    """
+    parts = [int(v.strip()) for v in crop_str.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            f"Expected 4 comma-separated integers (X,Y,W,H), got: {crop_str}"
+        )
+    return {
+        "left": parts[0],
+        "top": parts[1],
+        "width": parts[2],
+        "height": parts[3],
+    }
+
+
 # ── Playback introspection ───────────────────────────────────────────────────
 
 def get_playback_state(page: Page) -> str:
@@ -283,12 +384,64 @@ def monitor_playback(page: Page, interval: float = 5.0) -> None:
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────────
 
-def main() -> None:
-    """Load a YouTube video from the command line."""
-    url: str = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
-    print(f"[CTRL] Target: {url}", flush=True)
+def _build_parser() -> argparse.ArgumentParser:
+    """Construct the CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Remote Controller – Playwright CDP bridge to the Vision VM browser.",
+    )
+    parser.add_argument(
+        "url",
+        nargs="?",
+        default=DEFAULT_URL,
+        help="YouTube video URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--crop",
+        type=str,
+        default=None,
+        metavar="X,Y,W,H",
+        help=(
+            "Manual ROI override as comma-separated integers: "
+            "left,top,width,height. Overrides automatic video detection."
+        ),
+    )
+    parser.add_argument(
+        "--vm-host",
+        type=str,
+        default=VM_HOST,
+        help="VM hostname for ROI updates (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--roi-port",
+        type=int,
+        default=ROI_PORT,
+        help="UDP port for ROI updates (default: %(default)s)",
+    )
+    return parser
 
-    page: Page = load_video(url)
+
+def main() -> None:
+    """Load a YouTube video and send the detected ROI to the VM."""
+    args = _build_parser().parse_args()
+
+    print(f"[CTRL] Target: {args.url}", flush=True)
+    page: Page = load_video(args.url)
+
+    # Determine the capture region (manual crop takes priority).
+    region: Optional[Dict[str, int]] = None
+    if args.crop:
+        region = _parse_crop(args.crop)
+        print(f"[CTRL] Using manual crop override: {region}", flush=True)
+    else:
+        region = calculate_video_region(page)
+
+    if region is not None:
+        send_region_update(region, host=args.vm_host, port=args.roi_port)
+    else:
+        print(
+            "[CTRL] No ROI detected – VM will capture the full display.",
+            flush=True,
+        )
 
     print("[CTRL] Controller active. Press Ctrl-C to exit.", flush=True)
     try:

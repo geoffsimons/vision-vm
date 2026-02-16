@@ -12,12 +12,13 @@ Wire protocol (per frame):
   [N bytes] – raw PNG image data
 """
 
+import json
 import os
 import socket
 import struct
 import threading
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import cv2
 import mss
@@ -27,6 +28,7 @@ import numpy as np
 
 HOST: str = "0.0.0.0"
 PORT: int = int(os.environ.get("STREAM_PORT", "5555"))
+ROI_PORT: int = int(os.environ.get("ROI_PORT", "5556"))
 DISPLAY: str = os.environ.get("DISPLAY", ":99")
 TARGET_FPS: int = int(os.environ.get("STREAM_FPS", "30"))
 
@@ -36,6 +38,82 @@ HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 # OpenCV PNG compression: 0 = no compression (fastest), 9 = max compression.
 # Level 1 gives a good speed/size trade-off for streaming.
 PNG_PARAMS: List[int] = [cv2.IMWRITE_PNG_COMPRESSION, 1]
+
+# ── Region-of-Interest (ROI) state ───────────────────────────────────────────
+
+capture_region: Dict[str, int] = {
+    "top": 0,
+    "left": 0,
+    "width": 1280,
+    "height": 720,
+}
+_region_lock: threading.Lock = threading.Lock()
+
+
+# ── ROI listener ─────────────────────────────────────────────────────────────
+
+def _roi_listener() -> None:
+    """Listen for region_update JSON commands on a UDP socket.
+
+    Expected payload::
+
+        {"command": "region_update",
+         "top": int, "left": int, "width": int, "height": int}
+    """
+    sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((HOST, ROI_PORT))
+    print(
+        f"[STREAM] ROI listener started on UDP {HOST}:{ROI_PORT}",
+        flush=True,
+    )
+
+    while True:
+        try:
+            data, addr = sock.recvfrom(4096)
+            msg: dict = json.loads(data.decode("utf-8"))
+
+            if msg.get("command") != "region_update":
+                continue
+
+            new_region: Dict[str, int] = {
+                "top": int(msg["top"]),
+                "left": int(msg["left"]),
+                "width": int(msg["width"]),
+                "height": int(msg["height"]),
+            }
+
+            if new_region["width"] <= 0 or new_region["height"] <= 0:
+                print(
+                    f"[STREAM] Ignoring invalid region from {addr}: "
+                    f"{new_region}",
+                    flush=True,
+                )
+                continue
+
+            with _region_lock:
+                capture_region.update(new_region)
+
+            print(
+                f"[STREAM] Capture region updated to: {new_region}",
+                flush=True,
+            )
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            print(
+                f"[STREAM] Bad ROI packet: {exc}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[STREAM] ROI listener error: {exc}",
+                flush=True,
+            )
+
+
+def _get_capture_monitor() -> dict:
+    """Return an mss-compatible monitor dict from the current ROI."""
+    with _region_lock:
+        return dict(capture_region)
 
 
 # ── Frame capture ────────────────────────────────────────────────────────────
@@ -70,26 +148,26 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     """Stream PNG frames to a single client until disconnect.
 
     Each invocation opens its own mss display handle so the X11
-    connection is never shared across threads.
+    connection is never shared across threads.  The capture region is
+    read fresh on every frame so ROI updates take effect immediately.
     """
     print(f"[STREAM] Client connected: {addr}", flush=True)
     interval: float = 1.0 / TARGET_FPS
 
     try:
         with mss.mss(display=DISPLAY) as sct:
-            monitor: dict = sct.monitors[0]
             print(
                 f"[STREAM] Thread {threading.current_thread().name} "
-                f"capturing monitor {monitor}",
+                f"using ROI capture region",
                 flush=True,
             )
 
             while True:
                 t0: float = time.monotonic()
 
+                monitor: dict = _get_capture_monitor()
                 png_data: Optional[bytes] = capture_png(sct, monitor)
                 if png_data is None:
-                    # Skip this frame; brief pause to avoid a tight error loop
                     time.sleep(interval)
                     continue
 
@@ -112,7 +190,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 # ── Server entry ─────────────────────────────────────────────────────────────
 
 def serve() -> None:
-    """Start the TCP streaming server.
+    """Start the TCP streaming server and the ROI UDP listener.
 
     The accept loop runs without holding an mss handle; each client
     thread creates its own inside *handle_client*.
@@ -139,11 +217,28 @@ def serve() -> None:
             flush=True,
         )
 
+    # Seed capture_region from the full monitor geometry.
+    with _region_lock:
+        capture_region.update({
+            "top": monitor.get("top", 0),
+            "left": monitor.get("left", 0),
+            "width": width,
+            "height": height,
+        })
+
     print(
         f"[STREAM] Serving PNG frames on {HOST}:{PORT}  "
         f"(display={DISPLAY}, {width}x{height})",
         flush=True,
     )
+    print(
+        f"[STREAM] Initial capture region: {capture_region}",
+        flush=True,
+    )
+
+    # Start the ROI listener in a background thread.
+    roi_thread = threading.Thread(target=_roi_listener, daemon=True)
+    roi_thread.start()
 
     srv: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -27,7 +27,7 @@ DEFAULT_PORT: int = 5555
 HEADER_FMT: str = "!Q"
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 
-WINDOW_NAME: str = "Vision VM Stream"
+WINDOW_BASE_NAME: str = "Vision VM Stream"
 
 # Rolling window for FPS calculation (last N frame timestamps)
 FPS_WINDOW: int = 60
@@ -91,6 +91,7 @@ def run(host: str, port: int) -> None:
     print("[VERIFY] Connected. Receiving frames …", flush=True)
 
     timestamps: Deque[float] = deque(maxlen=FPS_WINDOW)
+    last_res: str = ""
 
     try:
         while True:
@@ -113,8 +114,23 @@ def run(host: str, port: int) -> None:
                 if elapsed > 0:
                     fps = (len(timestamps) - 1) / elapsed
 
+            # Update window title when the capture resolution changes.
+            h: int = frame.shape[0]
+            w: int = frame.shape[1]
+            current_res: str = f"{w}x{h}"
+            if current_res != last_res:
+                last_res = current_res
+                window_title: str = (
+                    f"{WINDOW_BASE_NAME} — Resolution: {current_res}"
+                )
+                cv2.setWindowTitle(WINDOW_BASE_NAME, window_title)
+                print(
+                    f"[VERIFY] Capture resolution changed: {current_res}",
+                    flush=True,
+                )
+
             overlay_diagnostics(frame, fps, len(png_data))
-            cv2.imshow(WINDOW_NAME, frame)
+            cv2.imshow(WINDOW_BASE_NAME, frame)
 
             # 'q' to quit; waitKey(1) keeps the GUI responsive
             if cv2.waitKey(1) & 0xFF == ord("q"):
