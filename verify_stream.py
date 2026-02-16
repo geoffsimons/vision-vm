@@ -24,10 +24,11 @@ import numpy as np
 DEFAULT_HOST: str = "localhost"
 DEFAULT_PORT: int = 5555
 
-HEADER_FMT: str = "!Q"
+HEADER_FMT: str = "!Qd"  # 8-byte length (Q) + 8-byte double (d) for timestamp
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 
 WINDOW_BASE_NAME: str = "Vision VM Stream"
+
 
 # Rolling window for FPS calculation (last N frame timestamps)
 FPS_WINDOW: int = 60
@@ -48,11 +49,12 @@ def recv_exact(sock: socket.socket, nbytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def recv_frame(sock: socket.socket) -> bytes:
-    """Read one length-prefixed PNG frame from the stream."""
+def recv_frame(sock: socket.socket) -> Tuple[bytes, float]:
+    """Read one length-prefixed PNG frame and its timestamp from the stream."""
     header: bytes = recv_exact(sock, HEADER_SIZE)
-    (length,) = struct.unpack(HEADER_FMT, header)
-    return recv_exact(sock, length)
+    length, timestamp = struct.unpack(HEADER_FMT, header)
+    png_data = recv_exact(sock, length)
+    return png_data, timestamp
 
 
 # ── Display ──────────────────────────────────────────────────────────────────
@@ -61,21 +63,25 @@ def overlay_diagnostics(
     frame: np.ndarray,
     fps: float,
     size_bytes: int,
+    timestamp: float,
 ) -> np.ndarray:
-    """Draw resolution, data size, and FPS onto the top-left of *frame*."""
+    """Draw resolution, data size, FPS, and playhead onto *frame*."""
     h: int = frame.shape[0]
     w: int = frame.shape[1]
     size_mb: float = size_bytes / (1024.0 * 1024.0)
-    text: str = f"Resolution: {w}x{h} | Size: {size_mb:.2f}MB | FPS: {fps:.1f}"
+    text: str = (
+        f"Res: {w}x{h} | {size_mb:.2f}MB | {fps:.1f} FPS | "
+        f"TS: {timestamp:.2f}s"
+    )
     # Black outline for contrast
     cv2.putText(
         frame, text, (10, 36),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3, cv2.LINE_AA,
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3, cv2.LINE_AA,
     )
     # Green foreground
     cv2.putText(
         frame, text, (10, 36),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA,
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA,
     )
     return frame
 
@@ -95,7 +101,7 @@ def run(host: str, port: int) -> None:
 
     try:
         while True:
-            png_data: bytes = recv_frame(sock)
+            png_data, v_time = recv_frame(sock)
             now: float = time.monotonic()
             timestamps.append(now)
 
@@ -129,7 +135,7 @@ def run(host: str, port: int) -> None:
                     flush=True,
                 )
 
-            overlay_diagnostics(frame, fps, len(png_data))
+            overlay_diagnostics(frame, fps, len(png_data), v_time)
             cv2.imshow(WINDOW_BASE_NAME, frame)
 
             # 'q' to quit; waitKey(1) keeps the GUI responsive
