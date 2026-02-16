@@ -18,7 +18,8 @@ import socket
 import struct
 import threading
 import time
-from typing import Dict, List, Optional
+from collections import deque
+from typing import Deque, Dict, List, Optional
 
 import cv2
 import mss
@@ -39,7 +40,7 @@ HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 # Level 1 gives a good speed/size trade-off for streaming.
 PNG_PARAMS: List[int] = [cv2.IMWRITE_PNG_COMPRESSION, 1]
 
-# ── Region-of-Interest (ROI) state ───────────────────────────────────────────
+# ── Global State ─────────────────────────────────────────────────────────────
 
 capture_region: Dict[str, int] = {
     "top": 0,
@@ -50,69 +51,74 @@ capture_region: Dict[str, int] = {
 _region_lock: threading.Lock = threading.Lock()
 _last_roi_log: float = 0.0
 
+# Telemetry
+current_fps: float = 0.0
+active_clients: int = 0
+_stats_lock: threading.Lock = threading.Lock()
+_last_roi_log: float = 0.0
 
-# ── ROI listener ─────────────────────────────────────────────────────────────
 
-def _roi_listener() -> None:
-    """Listen for region_update JSON commands on a UDP socket.
+# ── Command Server (Port 5556) ───────────────────────────────────────────────
 
-    Expected payload::
-
-        {"command": "region_update",
-         "top": int, "left": int, "width": int, "height": int}
-    """
-    sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((HOST, ROI_PORT))
-    print(
-        f"[STREAM] ROI listener started on UDP {HOST}:{ROI_PORT}",
-        flush=True,
-    )
+def command_server() -> None:
+    """TCP command server for ROI updates and telemetry."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((HOST, ROI_PORT))
+    srv.listen(5)
+    print(f"[MGMT] Command server started on TCP {HOST}:{ROI_PORT}", flush=True)
 
     while True:
         try:
-            data, addr = sock.recvfrom(4096)
-            print(f"[ROI_CMD] Received raw data: {data}", flush=True)
-            msg: dict = json.loads(data.decode("utf-8"))
-
-            if msg.get("command") != "region_update":
+            conn, addr = srv.accept()
+            print(f"[MGMT] Accepted command connection from {addr}", flush=True)
+            
+            data = conn.recv(4096)
+            if not data:
+                conn.close()
                 continue
+            
+            msg = json.loads(data.decode("utf-8"))
+            cmd = msg.get("command")
 
-            new_region: Dict[str, int] = {
-                "top": int(msg["top"]),
-                "left": int(msg["left"]),
-                "width": int(msg["width"]),
-                "height": int(msg["height"]),
-            }
+            if cmd == "status":
+                with _region_lock:
+                    region = dict(capture_region)
+                with _stats_lock:
+                    fps = current_fps
+                    clients = active_clients
+                resp = {
+                    "status": "ok",
+                    "capture_region": region,
+                    "fps": fps,
+                    "active_clients": clients
+                }
+                conn.sendall(json.dumps(resp).encode("utf-8"))
 
-            if new_region["width"] <= 0 or new_region["height"] <= 0:
-                print(
-                    f"[STREAM] Ignoring invalid region from {addr}: "
-                    f"{new_region}",
-                    flush=True,
-                )
-                continue
+            elif cmd == "region_update":
+                print(f"[ROI_CMD] Received raw data: {data}", flush=True)
+                new_region: Dict[str, int] = {
+                    "top": int(msg["top"]),
+                    "left": int(msg["left"]),
+                    "width": int(msg["width"]),
+                    "height": int(msg["height"]),
+                }
 
-            with _region_lock:
-                print(f"[ROI_CMD] Current region before update: {capture_region}", flush=True)
-                if new_region == capture_region:
+                if new_region["width"] <= 0 or new_region["height"] <= 0:
+                    conn.sendall(json.dumps({"status": "error", "message": "invalid dimensions"}).encode("utf-8"))
+                    conn.close()
                     continue
-                capture_region.update(new_region)
 
-            print(
-                f"[ROI_CMD] Successfully updated global state to: {new_region}",
-                flush=True,
-            )
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            print(
-                f"[STREAM] Bad ROI packet: {exc}",
-                flush=True,
-            )
+                with _region_lock:
+                    print(f"[ROI_CMD] Current region before update: {capture_region}", flush=True)
+                    capture_region.update(new_region)
+
+                print(f"[ROI_CMD] Successfully updated global state to: {new_region}", flush=True)
+                conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
+
+            conn.close()
         except Exception as exc:
-            print(
-                f"[STREAM] ROI listener error: {exc}",
-                flush=True,
-            )
+            print(f"[MGMT] Command error: {exc}", flush=True)
 
 
 def _get_capture_monitor() -> dict:
@@ -163,9 +169,14 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     connection is never shared across threads.  The capture region is
     read fresh on every frame so ROI updates take effect immediately.
     """
+    global active_clients, current_fps
+    with _stats_lock:
+        active_clients += 1
+
     print(f"[STREAM] Client connected: {addr}", flush=True)
     interval: float = 1.0 / TARGET_FPS
     f_count: int = 0
+    ts_history: Deque[float] = deque(maxlen=30)
 
     try:
         with mss.mss(display=DISPLAY) as sct:
@@ -175,9 +186,13 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 flush=True,
             )
 
+            monitor = _get_capture_monitor()
             while True:
-                monitor: dict = _get_capture_monitor()
                 t0: float = time.monotonic()
+
+                # Logic Safeguard: Read global ROI every 10 frames
+                if f_count % 10 == 0:
+                    monitor = _get_capture_monitor()
 
                 png_data: Optional[bytes] = capture_png(sct, monitor)
                 if png_data is None:
@@ -186,6 +201,14 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
                 header: bytes = struct.pack(HEADER_FMT, len(png_data))
                 conn.sendall(header + png_data)
+
+                # Update Telemetry
+                now = time.monotonic()
+                ts_history.append(now)
+                if len(ts_history) > 1:
+                    avg_fps = (len(ts_history) - 1) / (ts_history[-1] - ts_history[0])
+                    with _stats_lock:
+                        current_fps = avg_fps
 
                 f_count += 1
                 if f_count % 100 == 0:
@@ -205,6 +228,8 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     except Exception as exc:
         print(f"[STREAM] Unexpected error for {addr}: {exc}", flush=True)
     finally:
+        with _stats_lock:
+            active_clients -= 1
         conn.close()
         print(f"[STREAM] Socket closed for {addr}", flush=True)
 
@@ -245,9 +270,9 @@ def serve() -> None:
         flush=True,
     )
 
-    # Start the ROI listener in a background thread.
-    roi_thread = threading.Thread(target=_roi_listener, daemon=True)
-    roi_thread.start()
+    # Start the TCP command server in a background thread.
+    cmd_thread = threading.Thread(target=command_server, daemon=True)
+    cmd_thread.start()
 
     srv: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

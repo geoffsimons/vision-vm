@@ -297,19 +297,42 @@ def send_region_update(
     host: str = VM_HOST,
     port: int = ROI_PORT,
 ) -> None:
-    """Send a region_update command to the VM's ROI listener via UDP."""
+    """Send a region_update command to the VM's command server via TCP."""
     payload: dict = {"command": "region_update", **region}
     data: bytes = json.dumps(payload).encode("utf-8")
 
-    sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.sendto(data, (host, port))
-        print(
-            f"[CTRL] Sent region_update to {host}:{port} → {region}",
-            flush=True,
-        )
-    finally:
-        sock.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.connect((host, port))
+            sock.sendall(data)
+            resp = sock.recv(1024)
+            print(
+                f"[CTRL] Sent region_update to {host}:{port} → {region} | "
+                f"Resp: {resp.decode('utf-8')}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[CTRL] Failed to send ROI update: {exc}", flush=True)
+
+
+def get_vm_status(
+    host: str = VM_HOST,
+    port: int = ROI_PORT,
+) -> Optional[dict]:
+    """Query the VM command server for ROI and telemetry."""
+    payload: dict = {"command": "status"}
+    data: bytes = json.dumps(payload).encode("utf-8")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.settimeout(5.0)
+            sock.connect((host, port))
+            sock.sendall(data)
+            resp = sock.recv(4096)
+            return json.loads(resp.decode("utf-8"))
+        except Exception as exc:
+            print(f"[CTRL] Failed to get VM status: {exc}", flush=True)
+            return None
 
 
 def reset_roi(host: str = VM_HOST, port: int = ROI_PORT) -> None:
@@ -469,6 +492,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ping",
+        action="store_true",
+        default=False,
+        help="Connect to the VM command server and print telemetry status.",
+    )
+    parser.add_argument(
         "--vm-host",
         type=str,
         default=VM_HOST,
@@ -486,6 +515,19 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Load a YouTube video and send the detected ROI to the VM."""
     args = _build_parser().parse_args()
+
+    if args.ping:
+        status = get_vm_status(host=args.vm_host, port=args.roi_port)
+        if status:
+            r = status.get("capture_region", {})
+            fps = status.get("fps", 0.0)
+            clients = status.get("active_clients", 0)
+            print(
+                f"VM STATUS: ROI={r.get('width')}x{r.get('height')} | "
+                f"FPS={fps:.1f} | Active Clients={clients}",
+                flush=True,
+            )
+        return
 
     if args.reset:
         reset_roi(host=args.vm_host, port=args.roi_port)
