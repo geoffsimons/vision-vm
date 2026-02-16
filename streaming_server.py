@@ -155,6 +155,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     """
     print(f"[STREAM] Client connected: {addr}", flush=True)
     interval: float = 1.0 / TARGET_FPS
+    frame_count: int = 0
 
     try:
         with mss.mss(display=DISPLAY) as sct:
@@ -165,9 +166,9 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             )
 
             while True:
+                monitor: dict = _get_capture_monitor()
                 t0: float = time.monotonic()
 
-                monitor: dict = _get_capture_monitor()
                 png_data: Optional[bytes] = capture_png(sct, monitor)
                 if png_data is None:
                     time.sleep(interval)
@@ -175,6 +176,15 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
                 header: bytes = struct.pack(HEADER_FMT, len(png_data))
                 conn.sendall(header + png_data)
+
+                frame_count += 1
+                if frame_count % 300 == 0:
+                    print(
+                        f"[STREAM] [{addr}] Frame {frame_count}: "
+                        f"ROI={monitor['width']}x{monitor['height']} "
+                        f"at ({monitor['left']},{monitor['top']})",
+                        flush=True,
+                    )
 
                 elapsed: float = time.monotonic() - t0
                 sleep_time: float = interval - elapsed
