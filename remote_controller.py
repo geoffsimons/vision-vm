@@ -113,14 +113,35 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     # Wait for the full YouTube player shell before sending keys
     wait_for_player_ready(page)
 
-    # Click the video player to ensure keyboard focus in App Mode
-    page.click("video", timeout=5000)
+    # Focus the player container so keyboard shortcuts are received
+    page.click(".html5-video-player", timeout=5000)
     time.sleep(0.5)
 
-    # Engage YouTube Theater Mode via keyboard shortcut
+    # Start / resume playback with YouTube's universal toggle
+    page.keyboard.press("k")
+    time.sleep(0.5)
+    print("[CTRL] Playback triggered via 'k' key.", flush=True)
+
+    # Engage Theater Mode and verify via player width
     page.keyboard.press("t")
     time.sleep(1)
+
+    player_width: int = page.evaluate(
+        "document.querySelector('#movie_player').offsetWidth"
+    )
+    if player_width < 1000:
+        print(
+            f"[CTRL] Player width {player_width}px < 1000 – "
+            "retrying Theater Mode.",
+            flush=True,
+        )
+        page.keyboard.press("t")
+        time.sleep(1)
+
     print("[CTRL] YouTube Theater Mode engaged via 't' key.", flush=True)
+
+    # Inject CSS to suppress residual YouTube UI chrome
+    _inject_ui_cleanup(page)
 
     print("[CTRL] Video playback confirmed.", flush=True)
     return page
@@ -172,6 +193,16 @@ def _ensure_playback(page: Page) -> None:
             "Check the VM display for consent dialogs.",
             flush=True,
         )
+
+
+def _inject_ui_cleanup(page: Page) -> None:
+    """Hide residual YouTube UI elements for a pseudo-fullscreen look."""
+    page.add_style_tag(content=(
+        ".ytp-chrome-top { display: none !important; } "
+        ".ytp-gradient-top { display: none !important; } "
+        "#masthead-container { display: none !important; }"
+    ))
+    print("[CTRL] CSS injected – YouTube UI chrome hidden.", flush=True)
 
 
 def _suppress_autoplay(page: Page) -> None:
