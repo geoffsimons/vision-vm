@@ -89,6 +89,11 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     if browser is None:
         browser = connect_browser()
 
+    # Ensure 't=' parameter for idempotent resume
+    if "t=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}t=0"
+
     # Use the first available context or create one
     contexts = browser.contexts
     if contexts:
@@ -323,6 +328,30 @@ def send_region_update(
             print(f"[CTRL] Unexpected error during ROI update: {exc}", flush=True)
 
 
+def update_telemetry(
+    current_time: float,
+    is_ended: bool,
+    host: str = VM_HOST,
+    port: int = ROI_PORT,
+) -> None:
+    """Send video playhead telemetry to the VM's command server."""
+    payload: dict = {
+        "command": "update_telemetry",
+        "current_time": current_time,
+        "is_ended": is_ended,
+    }
+    data: bytes = json.dumps(payload).encode("utf-8")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.settimeout(2.0)
+            sock.connect((host, port))
+            sock.sendall(data)
+            # No need to wait for response for high-frequency telemetry
+        except Exception as exc:
+            print(f"[CTRL] Failed to sync telemetry: {exc}", flush=True)
+
+
 def get_vm_status(
     host: str = VM_HOST,
     port: int = ROI_PORT,
@@ -410,26 +439,23 @@ def get_playback_state(page: Page) -> str:
 
 def monitor_playback(
     page: Page,
-    interval: float = 5.0,
+    interval: float = 0.5,
     *,
     vm_host: str = VM_HOST,
     roi_port: int = ROI_PORT,
     last_region: Optional[Dict[str, int]] = None,
 ) -> None:
-    """Poll the page URL and video region, logging changes.
+    """Poll the page URL, video region, and telemetry, logging changes.
 
-    Re-detects the video bounding box on every tick and sends an ROI
-    update to the VM only when the region has actually changed.  This
-    ensures the capture region persists across controller restarts
-    (the server is never told to reset) while still tracking layout
-    shifts during playback.
+    Executes telemetry JS every 500ms and syncs with the VM. ROI detection
+    happens on the same interval but only updates on change.
 
     Parameters
     ----------
     page : Page
         Active Playwright page to monitor.
     interval : float
-        Seconds between each check (default 5).
+        Seconds between each check (default 0.5).
     vm_host : str
         VM hostname for ROI updates.
     roi_port : int
@@ -444,6 +470,24 @@ def monitor_playback(
     while True:
         time.sleep(interval)
 
+        # 1. Telemetry Sync (Every 500ms)
+        try:
+            telemetry = page.evaluate(
+                "{ 'time': document.querySelector('video').currentTime, "
+                "'ended': document.querySelector('video').ended }"
+            )
+            v_time = float(telemetry.get("time", 0.0))
+            v_ended = bool(telemetry.get("ended", False))
+
+            update_telemetry(v_time, v_ended, host=vm_host, port=roi_port)
+            print(
+                f"[MGMT] Syncing playhead: {v_time:.2f}s | Ended: {v_ended}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[MONITOR] Telemetry JS failed: {exc}", flush=True)
+
+        # 2. URL Change Detection
         current_url: str = page.url
         if current_url != last_url:
             print(
@@ -453,6 +497,7 @@ def monitor_playback(
             )
             last_url = current_url
 
+        # 3. ROI Change Detection
         current_region: Optional[Dict[str, int]] = (
             calculate_video_region(page, quiet=True)
         )

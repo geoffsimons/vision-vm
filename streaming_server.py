@@ -33,7 +33,7 @@ ROI_PORT: int = int(os.environ.get("ROI_PORT", "5556"))
 DISPLAY: str = os.environ.get("DISPLAY", ":99")
 TARGET_FPS: int = int(os.environ.get("STREAM_FPS", "30"))
 
-HEADER_FMT: str = "!Q"  # 8-byte unsigned long long, big-endian
+HEADER_FMT: str = "!Qd"  # 8-byte length (Q) + 8-byte double (d) for timestamp
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
 
 # OpenCV PNG compression: 0 = no compression (fastest), 9 = max compression.
@@ -42,11 +42,13 @@ PNG_PARAMS: List[int] = [cv2.IMWRITE_PNG_COMPRESSION, 1]
 
 # ── Global State ─────────────────────────────────────────────────────────────
 
-capture_region: Dict[str, int] = {
+capture_region: Dict[str, any] = {
     "top": 0,
     "left": 0,
     "width": 1280,
     "height": 720,
+    "current_time": 0.0,
+    "is_ended": False,
 }
 _region_lock: threading.Lock = threading.Lock()
 _last_roi_log: float = 0.0
@@ -110,9 +112,18 @@ def command_server() -> None:
 
                 with _region_lock:
                     print(f"[ROI_CMD] Current region before update: {capture_region}", flush=True)
-                    capture_region.update(new_region)
+                    capture_region["top"] = new_region["top"]
+                    capture_region["left"] = new_region["left"]
+                    capture_region["width"] = new_region["width"]
+                    capture_region["height"] = new_region["height"]
 
                 print(f"[ROI_CMD] Successfully updated global state to: {new_region}", flush=True)
+                conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
+
+            elif cmd == "update_telemetry":
+                with _region_lock:
+                    capture_region["current_time"] = float(msg.get("current_time", 0.0))
+                    capture_region["is_ended"] = bool(msg.get("is_ended", False))
                 conn.sendall(json.dumps({"status": "ok"}).encode("utf-8"))
 
             conn.close()
@@ -124,7 +135,13 @@ def _get_capture_monitor() -> dict:
     """Return an mss-compatible monitor dict from the current ROI."""
     global _last_roi_log
     with _region_lock:
-        res = dict(capture_region)
+        # mss.grab only wants top, left, width, height
+        res = {
+            "top": capture_region["top"],
+            "left": capture_region["left"],
+            "width": capture_region["width"],
+            "height": capture_region["height"],
+        }
 
     now = time.monotonic()
     if now - _last_roi_log > 5.0:
@@ -198,7 +215,10 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     time.sleep(interval)
                     continue
 
-                header: bytes = struct.pack(HEADER_FMT, len(png_data))
+                with _region_lock:
+                    v_time = capture_region["current_time"]
+
+                header: bytes = struct.pack(HEADER_FMT, len(png_data), v_time)
                 conn.sendall(header + png_data)
 
                 # Update Telemetry
