@@ -303,6 +303,7 @@ def send_region_update(
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
+            sock.settimeout(5.0)
             sock.connect((host, port))
             sock.sendall(data)
             resp = sock.recv(1024)
@@ -311,8 +312,15 @@ def send_region_update(
                 f"Resp: {resp.decode('utf-8')}",
                 flush=True,
             )
+        except (ConnectionRefusedError, socket.timeout) as exc:
+            print(
+                f"[CTRL] Connection to {host}:{port} failed: {exc}\n"
+                f"[HINT] Ensure port {port} is exposed in docker-compose.yml "
+                f"and the VM is running.",
+                flush=True,
+            )
         except Exception as exc:
-            print(f"[CTRL] Failed to send ROI update: {exc}", flush=True)
+            print(f"[CTRL] Unexpected error during ROI update: {exc}", flush=True)
 
 
 def get_vm_status(
@@ -507,7 +515,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--roi-port",
         type=int,
         default=ROI_PORT,
-        help="UDP port for ROI updates (default: %(default)s)",
+        help="Management port for ROI updates and telemetry (default: %(default)s)",
     )
     return parser
 

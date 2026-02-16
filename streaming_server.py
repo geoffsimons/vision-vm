@@ -55,7 +55,6 @@ _last_roi_log: float = 0.0
 current_fps: float = 0.0
 active_clients: int = 0
 _stats_lock: threading.Lock = threading.Lock()
-_last_roi_log: float = 0.0
 
 
 # ── Command Server (Port 5556) ───────────────────────────────────────────────
@@ -64,9 +63,9 @@ def command_server() -> None:
     """TCP command server for ROI updates and telemetry."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((HOST, ROI_PORT))
+    srv.bind(("0.0.0.0", ROI_PORT))
     srv.listen(5)
-    print(f"[MGMT] Command server started on TCP {HOST}:{ROI_PORT}", flush=True)
+    print(f"[MGMT] Command server started on TCP 0.0.0.0:{ROI_PORT}", flush=True)
 
     while True:
         try:
