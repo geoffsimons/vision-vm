@@ -44,8 +44,8 @@ PNG_PARAMS: List[int] = [cv2.IMWRITE_PNG_COMPRESSION, 1]
 capture_region: Dict[str, int] = {
     "top": 0,
     "left": 0,
-    "width": 1280,
-    "height": 720,
+    "width": 0,
+    "height": 0,
 }
 _region_lock: threading.Lock = threading.Lock()
 
@@ -219,22 +219,32 @@ def serve() -> None:
             flush=True,
         )
 
-    # Seed capture_region from the full monitor geometry.
+    # Seed capture_region from the probe only when still uninitialised
+    # (0x0).  A previously set ROI (e.g. from the remote controller)
+    # must never be overwritten by a display re-probe.
     with _region_lock:
-        capture_region.update({
-            "top": monitor.get("top", 0),
-            "left": monitor.get("left", 0),
-            "width": width,
-            "height": height,
-        })
+        if capture_region["width"] == 0 or capture_region["height"] == 0:
+            capture_region.update({
+                "top": monitor.get("top", 0),
+                "left": monitor.get("left", 0),
+                "width": width,
+                "height": height,
+            })
+            print(
+                f"[STREAM] Seeded capture region from display: "
+                f"{capture_region}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[STREAM] Preserving existing capture region: "
+                f"{capture_region}",
+                flush=True,
+            )
 
     print(
         f"[STREAM] Serving PNG frames on {HOST}:{PORT}  "
         f"(display={DISPLAY}, {width}x{height})",
-        flush=True,
-    )
-    print(
-        f"[STREAM] Initial capture region: {capture_region}",
         flush=True,
     )
 

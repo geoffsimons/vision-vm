@@ -458,6 +458,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--reset-roi",
+        action="store_true",
+        default=False,
+        help=(
+            "Send a full-display 1280x720 ROI reset to the VM and exit "
+            "without loading a video."
+        ),
+    )
+    parser.add_argument(
         "--vm-host",
         type=str,
         default=VM_HOST,
@@ -475,6 +484,22 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Load a YouTube video and send the detected ROI to the VM."""
     args = _build_parser().parse_args()
+
+    if args.reset_roi:
+        reset_region: Dict[str, int] = {
+            "top": 0,
+            "left": 0,
+            "width": DEFAULT_WIDTH,
+            "height": DEFAULT_HEIGHT,
+        }
+        print(
+            f"[CTRL] Resetting ROI to full display: {reset_region}",
+            flush=True,
+        )
+        send_region_update(
+            reset_region, host=args.vm_host, port=args.roi_port,
+        )
+        return
 
     print(f"[CTRL] Target: {args.url}", flush=True)
     page: Page = load_video(args.url)
