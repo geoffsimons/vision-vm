@@ -48,6 +48,7 @@ capture_region: Dict[str, int] = {
     "height": 720,
 }
 _region_lock: threading.Lock = threading.Lock()
+_last_roi_log: float = 0.0
 
 
 # ── ROI listener ─────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ def _roi_listener() -> None:
     while True:
         try:
             data, addr = sock.recvfrom(4096)
+            print(f"[ROI_CMD] Received raw data: {data}", flush=True)
             msg: dict = json.loads(data.decode("utf-8"))
 
             if msg.get("command") != "region_update":
@@ -92,12 +94,13 @@ def _roi_listener() -> None:
                 continue
 
             with _region_lock:
+                print(f"[ROI_CMD] Current region before update: {capture_region}", flush=True)
                 if new_region == capture_region:
                     continue
                 capture_region.update(new_region)
 
             print(
-                f"[STREAM] Capture region updated to: {new_region}",
+                f"[ROI_CMD] Successfully updated global state to: {new_region}",
                 flush=True,
             )
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
@@ -114,8 +117,15 @@ def _roi_listener() -> None:
 
 def _get_capture_monitor() -> dict:
     """Return an mss-compatible monitor dict from the current ROI."""
+    global _last_roi_log
     with _region_lock:
-        return dict(capture_region)
+        res = dict(capture_region)
+
+    now = time.monotonic()
+    if now - _last_roi_log > 5.0:
+        print(f"[DEBUG] Providing ROI to thread: {res}", flush=True)
+        _last_roi_log = now
+    return res
 
 
 # ── Frame capture ────────────────────────────────────────────────────────────
@@ -130,7 +140,7 @@ def capture_png(sct: mss.mss, monitor: dict) -> Optional[bytes]:
         frame = sct.grab(monitor)
     except Exception as exc:
         print(
-            f"[STREAM] Transient capture error: {exc}",
+            f"[STREAM] Grab failed. Monitor: {monitor}, Error: {exc}",
             flush=True,
         )
         return None
@@ -155,7 +165,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     """
     print(f"[STREAM] Client connected: {addr}", flush=True)
     interval: float = 1.0 / TARGET_FPS
-    frame_count: int = 0
+    f_count: int = 0
 
     try:
         with mss.mss(display=DISPLAY) as sct:
@@ -177,12 +187,12 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 header: bytes = struct.pack(HEADER_FMT, len(png_data))
                 conn.sendall(header + png_data)
 
-                frame_count += 1
-                if frame_count % 300 == 0:
+                f_count += 1
+                if f_count % 100 == 0:
                     print(
-                        f"[STREAM] [{addr}] Frame {frame_count}: "
-                        f"ROI={monitor['width']}x{monitor['height']} "
-                        f"at ({monitor['left']},{monitor['top']})",
+                        f"[STREAM_TRACE] Thread {threading.current_thread().name} | "
+                        f"Client {addr} | Capture ROI: {monitor} | "
+                        f"PNG Size: {len(png_data)} bytes",
                         flush=True,
                     )
 
