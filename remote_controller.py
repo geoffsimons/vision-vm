@@ -297,17 +297,7 @@ def send_region_update(
     host: str = VM_HOST,
     port: int = ROI_PORT,
 ) -> None:
-    """Send a region_update command to the VM's ROI listener via UDP.
-
-    Parameters
-    ----------
-    region : dict
-        Must contain ``top``, ``left``, ``width``, ``height`` keys.
-    host : str
-        VM hostname or IP address.
-    port : int
-        UDP port the ROI listener is bound to.
-    """
+    """Send a region_update command to the VM's ROI listener via UDP."""
     payload: dict = {"command": "region_update", **region}
     data: bytes = json.dumps(payload).encode("utf-8")
 
@@ -320,6 +310,18 @@ def send_region_update(
         )
     finally:
         sock.close()
+
+
+def reset_roi(host: str = VM_HOST, port: int = ROI_PORT) -> None:
+    """Send a full-display 1280x720 ROI reset to the VM."""
+    region: Dict[str, int] = {
+        "top": 0,
+        "left": 0,
+        "width": DEFAULT_WIDTH,
+        "height": DEFAULT_HEIGHT,
+    }
+    print(f"[CTRL] Resetting ROI to {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}", flush=True)
+    send_region_update(region, host=host, port=port)
 
 
 def _parse_crop(crop_str: str) -> Dict[str, int]:
@@ -458,7 +460,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--reset-roi",
+        "--reset",
         action="store_true",
         default=False,
         help=(
@@ -485,20 +487,8 @@ def main() -> None:
     """Load a YouTube video and send the detected ROI to the VM."""
     args = _build_parser().parse_args()
 
-    if args.reset_roi:
-        reset_region: Dict[str, int] = {
-            "top": 0,
-            "left": 0,
-            "width": DEFAULT_WIDTH,
-            "height": DEFAULT_HEIGHT,
-        }
-        print(
-            f"[CTRL] Resetting ROI to full display: {reset_region}",
-            flush=True,
-        )
-        send_region_update(
-            reset_region, host=args.vm_host, port=args.roi_port,
-        )
+    if args.reset:
+        reset_roi(host=args.vm_host, port=args.roi_port)
         return
 
     print(f"[CTRL] Target: {args.url}", flush=True)
