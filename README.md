@@ -4,22 +4,70 @@ Vision VM is a headless Linux environment optimized for high-frequency frame cap
 
 ---
 
-## Project Overview
+## Architecture & API
 
-The core intent of Vision VM is to create a seamless pipeline:
-**Headless Chrome** (Rendering) -> **PNG Stream** (Capture) -> **CV Analyzer** (Processing).
+Vision VM operates through a multi-port system to ensure isolation of concerns and high-performance telemetry.
 
-By leveraging Xvfb and Fluxbox, it provides a stable environment for complex web interactions while exposing low-level control and high-performance streaming interfaces.
+### Port & Protocol Summary
+
+| Port | Protocol | Component | Role |
+| :--- | :--- | :--- | :--- |
+| **9222** | TCP / CDP | Chrome | Navigation, duration retrieval, and playback control. |
+| **5555** | TCP / Binary | Stream Server | High-speed, lossless PNG-over-TCP frame delivery. |
+| **5556** | TCP / JSON | Mgmt Server | Command & Control API for telemetry and ROI management. |
+| **5900** | TCP / RFB | VNC | Visual setup and debugging via Screen Sharing. |
+
+### Binary Stream Protocol (Port 5555)
+
+The stream server delivers frames using a length-prefixed binary protocol. Each message consists of a 16-byte header followed by the raw PNG payload.
+
+**Header Format:**
+```python
+# struct format: !Qd
+# !: Big-endian
+# Q: 8-byte unsigned long long (Payload Length)
+# d: 8-byte double (Timestamp/Playhead)
+```
+
+### Management API (Port 5556)
+
+The management API accepts JSON commands and returns the current system and playback state.
+
+**Common Commands:**
+- `status`: Retrieve current ROI, telemetry, and performance metrics.
+- `region_update`: Set the capture bounding box (`top`, `left`, `width`, `height`).
+- `set_duration`: Push the video duration discovered via CDP.
+- `update_telemetry`: Sync the current playhead and video status.
+
+**Status Response Schema:**
+```json
+{
+  "status": "ok",
+  "capture_region": {
+    "top": 0,
+    "left": 0,
+    "width": 1280,
+    "height": 720,
+    "current_time": 45.2,
+    "duration": 300.5,
+    "is_ended": false,
+    "video_status": "playing"
+  },
+  "fps": 30.1,
+  "active_clients": 1
+}
+```
 
 ---
 
-## System Architecture
+## Playback Lifecycle
 
-Vision VM operates through a **3-port bridge** strategy to ensure isolation of concerns:
+To ensure clean-exit transitions and accurate CV analysis, clients should adhere to the following lifecycle:
 
-*   **Port 9222 (CDP):** Chrome DevTools Protocol. Used for direct browser automation and inspection via a `socat` bridge.
-*   **Port 5555 (Stream):** High-speed, lossless PNG-over-TCP frame delivery.
-*   **Port 5556 (Mgmt):** Command & Control API for telemetry and ROI (Region of Interest) management.
+1.  **Load:** Navigate the browser to the target URL. Append `&t=0` (or a specific checkpoint) to ensure idempotent start times.
+2.  **Sync:** Once the page is loaded, query `document.querySelector("video").duration` via CDP (Port 9222) and push the value to the Management API (Port 5556) using `set_duration`.
+3.  **Monitor:** Ingest frames from the Binary Stream (Port 5555). Compare the frame's playhead timestamp against the total duration retrieved in step 2.
+4.  **Exit:** When `currentTime >= (duration - 1.0)`, trigger a `pause()` command via CDP and update the VM status to `complete` via Port 5556. This allows orchestrators to transition safely before the video ends or redirects.
 
 ---
 
@@ -37,15 +85,15 @@ python3 remote_controller.py --ping
 ```
 
 ### 3. Control Browser
-Navigate to a specific URL:
+Navigate to a specific URL and start the monitoring watchdog:
 ```bash
-python3 remote_controller.py https://example.com
+python3 remote_controller.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
 ### 4. Verify Stream
-Visualize the incoming frame stream:
+Visualize the incoming frame stream with telemetry overlay:
 ```bash
-python3 verify_stream.py
+python3 verify_stream.py --auto-close
 ```
 
 ---

@@ -14,3 +14,6 @@ The system uses Xvfb on Display :99 for headless Chrome rendering. This provides
 
 ## Dynamic Region-of-Interest (ROI) Persistence
 The system supports dynamic, client-controlled ROI for frame capture. These coordinates are managed via the TCP Mgmt API (Port 5556) and are intended to be persistent or easily re-applied to maintain consistent CV targets.
+
+## End-to-End Video Playback Telemetry
+The system now incorporates comprehensive telemetry for video playback, including current playhead time, total duration, and playback status (playing/complete). This telemetry is synchronized from the `remote_controller.py` to the `streaming_server.py` and embedded in each streamed frame, enabling downstream computer vision analysis to precisely correlate visual events with the video timeline and react to playback lifecycle events. This also facilitates client-side features like auto-closing on video completion.
