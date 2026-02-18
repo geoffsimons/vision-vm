@@ -74,6 +74,13 @@ Programmatically jumps to a specific timestamp in the active video.
 | :--- | :--- | :--- |
 | `time` | float | Target playhead timestamp in seconds. |
 
+#### `POST /browser/interact`
+Executes basic video playback controls (play/pause).
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `action` | string | The interaction to perform (`play` or `pause`). |
+
 ### Binary Stream Protocol (Port 5555)
 
 The stream server delivers frames using a length-prefixed binary protocol. Each message consists of a 16-byte header followed by the raw PNG payload.
