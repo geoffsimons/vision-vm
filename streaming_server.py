@@ -154,9 +154,11 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 now = time.monotonic()
                 ts_history.append(now)
                 if len(ts_history) > 1:
-                    avg_fps = (len(ts_history) - 1) / (ts_history[-1] - ts_history[0])
-                    with stats_lock:
-                        current_fps = avg_fps
+                    diff = ts_history[-1] - ts_history[0]
+                    if diff > 0:
+                        avg_fps = (len(ts_history) - 1) / diff
+                        with stats_lock:
+                            current_fps = avg_fps
 
                 f_count += 1
                 if f_count % 100 == 0:

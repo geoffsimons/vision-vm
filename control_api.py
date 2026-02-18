@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 from typing import Dict, Optional
 
@@ -9,6 +10,18 @@ from playwright.async_api import async_playwright, Page, Browser, Error as Playw
 import streaming_server
 
 app = FastAPI(title="Vision VM Control API")
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def sanitize_float(val: any) -> float:
+    """Ensure a value is a JSON-compliant float (not NaN or Inf)."""
+    try:
+        f_val = float(val)
+        if math.isnan(f_val) or math.isinf(f_val):
+            return 0.0
+        return f_val
+    except (TypeError, ValueError):
+        return 0.0
 
 # ── Models ───────────────────────────────────────────────────────────────────
 
@@ -179,8 +192,8 @@ async def monitor_playback():
                 # 1. Update Telemetry & ROI
                 with streaming_server.region_lock:
                     if "time" in status:
-                        streaming_server.capture_region["current_time"] = status["time"]
-                        streaming_server.capture_region["duration"] = status.get("duration", 0.0)
+                        streaming_server.capture_region["current_time"] = sanitize_float(status["time"])
+                        streaming_server.capture_region["duration"] = sanitize_float(status.get("duration", 0.0))
                         streaming_server.capture_region["is_ended"] = status.get("ended", False)
                         streaming_server.capture_region["video_status"] = "paused" if status.get("paused") else "playing"
 
@@ -220,7 +233,7 @@ async def get_status():
     with streaming_server.region_lock:
         region = dict(streaming_server.capture_region)
     with streaming_server.stats_lock:
-        fps = streaming_server.current_fps
+        fps = sanitize_float(streaming_server.current_fps)
         clients = streaming_server.active_clients
     return {
         "status": "ok",
@@ -270,12 +283,12 @@ async def update_region(req: RegionUpdate):
 @app.post("/sensor/telemetry")
 async def update_telemetry(req: TelemetryUpdate):
     with streaming_server.region_lock:
-        streaming_server.capture_region["current_time"] = req.current_time
+        streaming_server.capture_region["current_time"] = sanitize_float(req.current_time)
         streaming_server.capture_region["is_ended"] = req.is_ended
         if req.video_status:
             streaming_server.capture_region["video_status"] = req.video_status
         if req.duration is not None:
-            streaming_server.capture_region["duration"] = req.duration
+            streaming_server.capture_region["duration"] = sanitize_float(req.duration)
     return {"status": "ok"}
 
 @app.post("/browser/interact")
