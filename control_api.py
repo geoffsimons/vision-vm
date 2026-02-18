@@ -299,5 +299,13 @@ async def update_telemetry(req: TelemetryUpdate):
 
 @app.post("/browser/interact")
 async def interact(req: InteractionRequest):
-    # Stub for future interaction
-    return {"status": "ok", "message": f"Action {req.action} received"}
+    if not chrome.page:
+        raise HTTPException(status_code=400, detail="No active browser page")
+
+    # Target the video element in the YouTube theater-mode container
+    if req.action == "pause":
+        await chrome.page.evaluate("document.querySelector('video').pause()")
+    elif req.action == "play":
+        await chrome.page.evaluate("document.querySelector('video').play()")
+
+    return {"status": "ok", "action": req.action}
