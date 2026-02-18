@@ -165,15 +165,6 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
     # Inject CSS to suppress residual YouTube UI chrome
     _inject_ui_cleanup(page)
 
-    # Query video duration and sync to VM
-    try:
-        duration = float(page.evaluate("document.querySelector('video').duration"))
-        if duration:
-            print(f"[CTRL] Detected video duration: {duration:.2f}s", flush=True)
-            set_duration(duration)
-    except Exception as exc:
-        print(f"[CTRL] Could not query duration: {exc}", flush=True)
-
     print("[CTRL] Video playback confirmed.", flush=True)
     return page
 
@@ -315,46 +306,6 @@ def send_region_update(
         print(f"[CTRL] Failed to send ROI update: {exc}", flush=True)
 
 
-def update_telemetry(
-    current_time: float,
-    is_ended: bool,
-    video_status: Optional[str] = None,
-    host: str = VM_HOST,
-    port: int = CONTROL_PORT,
-) -> None:
-    """Send video playhead telemetry to the VM's Control API."""
-    payload: dict = {
-        "current_time": current_time,
-        "is_ended": is_ended,
-    }
-    if video_status:
-        payload["video_status"] = video_status
-
-    try:
-        url = f"http://{host}:{port}/sensor/telemetry"
-        requests.post(url, json=payload, timeout=2.0)
-    except Exception as exc:
-        print(f"[CTRL] Failed to sync telemetry: {exc}", flush=True)
-
-
-def set_duration(
-    duration: float,
-    host: str = VM_HOST,
-    port: int = CONTROL_PORT,
-) -> None:
-    """Push the video duration to the VM's Control API."""
-    payload: dict = {
-        "current_time": 0.0,
-        "is_ended": False,
-        "duration": duration,
-    }
-    try:
-        url = f"http://{host}:{port}/sensor/telemetry"
-        requests.post(url, json=payload, timeout=2.0)
-    except Exception as exc:
-        print(f"[CTRL] Failed to sync duration: {exc}", flush=True)
-
-
 def get_vm_status(
     host: str = VM_HOST,
     port: int = CONTROL_PORT,
@@ -422,7 +373,10 @@ def monitor_playback(
     control_port: int = CONTROL_PORT,
     last_region: Optional[Dict[str, int]] = None,
 ) -> None:
-    """Poll the page URL, video region, and telemetry, logging changes."""
+    """Poll the page URL and video region, logging changes.
+
+    Telemetry (time/duration) is now handled internally by the VM.
+    """
     last_url: str = page.url
     print(f"[MONITOR] Watching URL: {last_url}", flush=True)
 
@@ -430,7 +384,7 @@ def monitor_playback(
     while True:
         time.sleep(interval)
 
-        # 1. Telemetry Sync
+        # 1. Internal Logging (Time/End state)
         try:
             telemetry = page.evaluate(
                 "() => ({ time: document.querySelector('video').currentTime, "
@@ -446,11 +400,10 @@ def monitor_playback(
                 video_status = "complete"
 
             if v_ended and video_status != "complete":
+                print("[MONITOR] Video ended.", flush=True)
                 video_status = "complete"
-
-            update_telemetry(v_time, v_ended, video_status=video_status, host=vm_host, port=control_port)
-        except Exception as exc:
-            print(f"[MONITOR] Telemetry JS failed: {exc}", flush=True)
+        except Exception:
+            pass  # Likely navigating or element missing
 
         # 2. URL Change Detection
         current_url: str = page.url
