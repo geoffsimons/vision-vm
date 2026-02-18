@@ -60,8 +60,5 @@ google-chrome-stable \
     --app=https://www.youtube.com &
 sleep 3
 
-# ── PNG streaming server (TCP :5555, background) ────────────────────────────
-python /app/streaming_server.py &
-
-# ── Hand off to capture script ───────────────────────────────────────────────
-exec python /app/capture_heartbeat.py
+# ── PNG streaming server & Control Plane ────────────────────────────────────
+exec python /app/main.py

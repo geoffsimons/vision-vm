@@ -10,7 +10,7 @@ Usage (from the Mac host):
 
 import argparse
 import json
-import socket
+import requests
 import sys
 import time
 from typing import Dict, Optional
@@ -26,7 +26,7 @@ DEFAULT_WIDTH: int = 1280
 DEFAULT_HEIGHT: int = 720
 
 VM_HOST: str = "localhost"
-ROI_PORT: int = 5556
+CONTROL_PORT: int = 8000
 
 
 # ── Core helpers ─────────────────────────────────────────────────────────────
@@ -272,20 +272,6 @@ def calculate_video_region(
     Uses Playwright's ``bounding_box()`` on the ``#movie_player video``
     locator to determine the exact pixel coordinates of the active video
     area within the virtual display.
-
-    Parameters
-    ----------
-    page : Page
-        Active Playwright page.
-    quiet : bool
-        When *True*, suppress informational log lines.  Used by the
-        periodic monitor loop to avoid log spam.
-
-    Returns
-    -------
-    dict or None
-        ``{"top": int, "left": int, "width": int, "height": int}`` on
-        success, or *None* if the element cannot be located.
     """
     try:
         locator = page.locator("#movie_player video")
@@ -293,10 +279,7 @@ def calculate_video_region(
         box = locator.bounding_box()
         if box is None:
             if not quiet:
-                print(
-                    "[CTRL] Could not resolve video bounding box.",
-                    flush=True,
-                )
+                print("[CTRL] Could not resolve video bounding box.", flush=True)
             return None
 
         region: Dict[str, int] = {
@@ -310,42 +293,26 @@ def calculate_video_region(
         return region
     except Exception as exc:
         if not quiet:
-            print(
-                f"[CTRL] Video region detection failed: {exc}",
-                flush=True,
-            )
+            print(f"[CTRL] Video region detection failed: {exc}", flush=True)
         return None
 
 
 def send_region_update(
     region: Dict[str, int],
     host: str = VM_HOST,
-    port: int = ROI_PORT,
+    port: int = CONTROL_PORT,
 ) -> None:
-    """Send a region_update command to the VM's command server via TCP."""
-    payload: dict = {"command": "region_update", **region}
-    data: bytes = json.dumps(payload).encode("utf-8")
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.settimeout(5.0)
-            sock.connect((host, port))
-            sock.sendall(data)
-            resp = sock.recv(1024)
-            print(
-                f"[CTRL] Sent region_update to {host}:{port} → {region} | "
-                f"Resp: {resp.decode('utf-8')}",
-                flush=True,
-            )
-        except (ConnectionRefusedError, socket.timeout) as exc:
-            print(
-                f"[CTRL] Connection to {host}:{port} failed: {exc}\n"
-                f"[HINT] Ensure port {port} is exposed in docker-compose.yml "
-                f"and the VM is running.",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[CTRL] Unexpected error during ROI update: {exc}", flush=True)
+    """Send a region_update command to the VM's Control API."""
+    try:
+        url = f"http://{host}:{port}/sensor/region"
+        resp = requests.post(url, json=region, timeout=5.0)
+        resp.raise_for_status()
+        print(
+            f"[CTRL] Sent region_update to {host}:{port} → {region}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[CTRL] Failed to send ROI update: {exc}", flush=True)
 
 
 def update_telemetry(
@@ -353,71 +320,57 @@ def update_telemetry(
     is_ended: bool,
     video_status: Optional[str] = None,
     host: str = VM_HOST,
-    port: int = ROI_PORT,
+    port: int = CONTROL_PORT,
 ) -> None:
-    """Send video playhead telemetry to the VM's command server."""
+    """Send video playhead telemetry to the VM's Control API."""
     payload: dict = {
-        "command": "update_telemetry",
         "current_time": current_time,
         "is_ended": is_ended,
     }
     if video_status:
         payload["video_status"] = video_status
 
-    data: bytes = json.dumps(payload).encode("utf-8")
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.settimeout(2.0)
-            sock.connect((host, port))
-            sock.sendall(data)
-            # No need to wait for response for high-frequency telemetry
-        except Exception as exc:
-            print(f"[CTRL] Failed to sync telemetry: {exc}", flush=True)
+    try:
+        url = f"http://{host}:{port}/sensor/telemetry"
+        requests.post(url, json=payload, timeout=2.0)
+    except Exception as exc:
+        print(f"[CTRL] Failed to sync telemetry: {exc}", flush=True)
 
 
 def set_duration(
     duration: float,
     host: str = VM_HOST,
-    port: int = ROI_PORT,
+    port: int = CONTROL_PORT,
 ) -> None:
-    """Push the video duration to the VM's command server."""
+    """Push the video duration to the VM's Control API."""
     payload: dict = {
-        "command": "set_duration",
+        "current_time": 0.0,
+        "is_ended": False,
         "duration": duration,
     }
-    data: bytes = json.dumps(payload).encode("utf-8")
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.settimeout(2.0)
-            sock.connect((host, port))
-            sock.sendall(data)
-        except Exception as exc:
-            print(f"[CTRL] Failed to sync duration: {exc}", flush=True)
+    try:
+        url = f"http://{host}:{port}/sensor/telemetry"
+        requests.post(url, json=payload, timeout=2.0)
+    except Exception as exc:
+        print(f"[CTRL] Failed to sync duration: {exc}", flush=True)
 
 
 def get_vm_status(
     host: str = VM_HOST,
-    port: int = ROI_PORT,
+    port: int = CONTROL_PORT,
 ) -> Optional[dict]:
-    """Query the VM command server for ROI and telemetry."""
-    payload: dict = {"command": "status"}
-    data: bytes = json.dumps(payload).encode("utf-8")
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.settimeout(5.0)
-            sock.connect((host, port))
-            sock.sendall(data)
-            resp = sock.recv(4096)
-            return json.loads(resp.decode("utf-8"))
-        except Exception as exc:
-            print(f"[CTRL] Failed to get VM status: {exc}", flush=True)
-            return None
+    """Query the VM Control API for status."""
+    try:
+        url = f"http://{host}:{port}/status"
+        resp = requests.get(url, timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        print(f"[CTRL] Failed to get VM status: {exc}", flush=True)
+        return None
 
 
-def reset_roi(host: str = VM_HOST, port: int = ROI_PORT) -> None:
+def reset_roi(host: str = VM_HOST, port: int = CONTROL_PORT) -> None:
     """Send a full-display 1280x720 ROI reset to the VM."""
     region: Dict[str, int] = {
         "top": 0,
@@ -430,23 +383,10 @@ def reset_roi(host: str = VM_HOST, port: int = ROI_PORT) -> None:
 
 
 def _parse_crop(crop_str: str) -> Dict[str, int]:
-    """Parse a ``X,Y,W,H`` crop string into an ROI dict.
-
-    Parameters
-    ----------
-    crop_str : str
-        Comma-separated values: ``left,top,width,height``.
-
-    Returns
-    -------
-    dict
-        ``{"top": int, "left": int, "width": int, "height": int}``
-    """
+    """Parse a ``X,Y,W,H`` crop string into an ROI dict."""
     parts = [int(v.strip()) for v in crop_str.split(",")]
     if len(parts) != 4:
-        raise ValueError(
-            f"Expected 4 comma-separated integers (X,Y,W,H), got: {crop_str}"
-        )
+        raise ValueError(f"Expected 4 comma-separated integers (X,Y,W,H), got: {crop_str}")
     return {
         "left": parts[0],
         "top": parts[1],
@@ -458,21 +398,13 @@ def _parse_crop(crop_str: str) -> Dict[str, int]:
 # ── Playback introspection ───────────────────────────────────────────────────
 
 def get_playback_state(page: Page) -> str:
-    """Query the YouTube player for its current playback state.
-
-    Returns
-    -------
-    str
-        One of ``'playing'``, ``'paused'``, or ``'ad'``.
-    """
+    """Query the YouTube player for its current playback state."""
     state: str = page.evaluate("""
         () => {
             const v = document.querySelector('video');
             if (!v) return 'paused';
-
             const adOverlay = document.querySelector('.ad-showing');
             if (adOverlay) return 'ad';
-
             if (!v.paused && !v.ended && v.readyState > 2) return 'playing';
             return 'paused';
         }
@@ -487,42 +419,18 @@ def monitor_playback(
     interval: float = 0.5,
     *,
     vm_host: str = VM_HOST,
-    roi_port: int = ROI_PORT,
+    control_port: int = CONTROL_PORT,
     last_region: Optional[Dict[str, int]] = None,
 ) -> None:
-    """Poll the page URL, video region, and telemetry, logging changes.
-
-    Executes telemetry JS every 500ms and syncs with the VM. ROI detection
-    happens on the same interval but only updates on change.
-
-    Parameters
-    ----------
-    page : Page
-        Active Playwright page to monitor.
-    interval : float
-        Seconds between each check (default 0.5).
-    vm_host : str
-        VM hostname for ROI updates.
-    roi_port : int
-        UDP port for ROI updates.
-    last_region : dict or None
-        The most recently sent region, used to suppress duplicate
-        updates.  Typically passed from ``main()``.
-    """
+    """Poll the page URL, video region, and telemetry, logging changes."""
     last_url: str = page.url
     print(f"[MONITOR] Watching URL: {last_url}", flush=True)
 
     video_status = "playing"
-    duration = 0.0
-    try:
-        duration = float(page.evaluate("document.querySelector('video').duration"))
-    except:
-        pass
-
     while True:
         time.sleep(interval)
 
-        # 1. Telemetry Sync (Every 500ms)
+        # 1. Telemetry Sync
         try:
             telemetry = page.evaluate(
                 "() => ({ time: document.querySelector('video').currentTime, "
@@ -533,45 +441,28 @@ def monitor_playback(
             v_ended = bool(telemetry.get("ended", False))
             v_duration = float(telemetry.get("duration", 0.0))
             
-            # Watchdog: check for clean-exit transition
             if v_duration > 0 and v_time >= (v_duration - 1.0) and video_status != "complete":
-                print(f"[MONITOR] Near end of video ({v_time:.2f}/{v_duration:.2f}). Triggering clean exit.", flush=True)
-                page.evaluate("document.querySelector('video').pause()")
+                print(f"[MONITOR] Near end of video ({v_time:.2f}/{v_duration:.2f}).", flush=True)
                 video_status = "complete"
             
             if v_ended and video_status != "complete":
                 video_status = "complete"
 
-            update_telemetry(v_time, v_ended, video_status=video_status, host=vm_host, port=roi_port)
-            print(
-                f"[MGMT] Syncing playhead: {v_time:.2f}s / {v_duration:.2f}s | Status: {video_status}",
-                flush=True,
-            )
+            update_telemetry(v_time, v_ended, video_status=video_status, host=vm_host, port=control_port)
         except Exception as exc:
             print(f"[MONITOR] Telemetry JS failed: {exc}", flush=True)
 
         # 2. URL Change Detection
         current_url: str = page.url
         if current_url != last_url:
-            print(
-                f"[AUTO-PLAY] Redirect detected! Adjusting... "
-                f"{last_url} -> {current_url}",
-                flush=True,
-            )
+            print(f"[AUTO-PLAY] Redirect: {last_url} -> {current_url}", flush=True)
             last_url = current_url
 
         # 3. ROI Change Detection
-        current_region: Optional[Dict[str, int]] = (
-            calculate_video_region(page, quiet=True)
-        )
+        current_region: Optional[Dict[str, int]] = calculate_video_region(page, quiet=True)
         if current_region is not None and current_region != last_region:
-            print(
-                f"[MONITOR] Video region changed: {current_region}",
-                flush=True,
-            )
-            send_region_update(
-                current_region, host=vm_host, port=roi_port,
-            )
+            print(f"[MONITOR] ROI changed: {current_region}", flush=True)
+            send_region_update(current_region, host=vm_host, port=control_port)
             last_region = current_region
 
 
@@ -593,37 +484,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="X,Y,W,H",
-        help=(
-            "Manual ROI override as comma-separated integers: "
-            "left,top,width,height. Overrides automatic video detection."
-        ),
+        help="Manual ROI override (X,Y,W,H)",
     )
     parser.add_argument(
         "--reset",
         action="store_true",
-        default=False,
-        help=(
-            "Send a full-display 1280x720 ROI reset to the VM and exit "
-            "without loading a video."
-        ),
+        help="Send a full-display 1280x720 ROI reset and exit.",
     )
     parser.add_argument(
         "--ping",
         action="store_true",
-        default=False,
-        help="Connect to the VM command server and print telemetry status.",
+        help="Connect to the VM Control API and print status.",
     )
     parser.add_argument(
         "--vm-host",
         type=str,
         default=VM_HOST,
-        help="VM hostname for ROI updates (default: %(default)s)",
+        help="VM hostname (default: %(default)s)",
     )
     parser.add_argument(
-        "--roi-port",
+        "--control-port",
         type=int,
-        default=ROI_PORT,
-        help="Management port for ROI updates and telemetry (default: %(default)s)",
+        default=CONTROL_PORT,
+        help="Control API port (default: %(default)s)",
     )
     return parser
 
@@ -633,49 +516,33 @@ def main() -> None:
     args = _build_parser().parse_args()
 
     if args.ping:
-        status = get_vm_status(host=args.vm_host, port=args.roi_port)
+        status = get_vm_status(host=args.vm_host, port=args.control_port)
         if status:
             r = status.get("capture_region", {})
             fps = status.get("fps", 0.0)
             clients = status.get("active_clients", 0)
-            print(
-                f"VM STATUS: ROI={r.get('width')}x{r.get('height')} | "
-                f"FPS={fps:.1f} | Active Clients={clients}",
-                flush=True,
-            )
+            print(f"VM STATUS: ROI={r.get('width')}x{r.get('height')} | FPS={fps:.1f} | Clients={clients}", flush=True)
         return
 
     if args.reset:
-        reset_roi(host=args.vm_host, port=args.roi_port)
+        reset_roi(host=args.vm_host, port=args.control_port)
         return
 
     print(f"[CTRL] Target: {args.url}", flush=True)
     page: Page = load_video(args.url)
 
-    # Determine the capture region (manual crop takes priority).
     region: Optional[Dict[str, int]] = None
     if args.crop:
         region = _parse_crop(args.crop)
-        print(f"[CTRL] Using manual crop override: {region}", flush=True)
     else:
         region = calculate_video_region(page)
 
     if region is not None:
-        send_region_update(region, host=args.vm_host, port=args.roi_port)
-    else:
-        print(
-            "[CTRL] No ROI detected – VM will capture the full display.",
-            flush=True,
-        )
+        send_region_update(region, host=args.vm_host, port=args.control_port)
 
     print("[CTRL] Controller active. Press Ctrl-C to exit.", flush=True)
     try:
-        monitor_playback(
-            page,
-            vm_host=args.vm_host,
-            roi_port=args.roi_port,
-            last_region=region,
-        )
+        monitor_playback(page, vm_host=args.vm_host, control_port=args.control_port, last_region=region)
     except KeyboardInterrupt:
         print("\n[CTRL] Exiting.", flush=True)
 

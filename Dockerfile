@@ -44,7 +44,7 @@ RUN playwright install-deps \
     && playwright install chromium
 
 # ── Application layout ──────────────────────────────────────────────────────
-COPY entrypoint.sh capture_heartbeat.py streaming_server.py reset-chrome.sh ./
+COPY entrypoint.sh capture_heartbeat.py streaming_server.py main.py control_api.py reset-chrome.sh ./
 RUN chmod +x entrypoint.sh reset-chrome.sh
 
 # ── Fluxbox (no toolbar, no window decorations) ────────────────────────────

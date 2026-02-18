@@ -8,9 +8,9 @@ services:
       - DEPTH=24
     ports:
       - "5555:5555"
-      - "5556:5556"
       - "5900:5900"
       - "9222:9222"
+      - "8001:8000"
     volumes:
       - ./captures:/captures
       - ./chrome-data:/chrome-data

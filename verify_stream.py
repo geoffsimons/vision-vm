@@ -22,11 +22,13 @@ from typing import Deque, Optional, Tuple
 import cv2
 import numpy as np
 
+import requests
+
 # ── Configuration ────────────────────────────────────────────────────────────
 
 DEFAULT_HOST: str = "localhost"
 DEFAULT_PORT: int = 5555
-DEFAULT_MGMT_PORT: int = 5556
+DEFAULT_CONTROL_PORT: int = 8000
 
 HEADER_FMT: str = "!Qd"  # 8-byte length (Q) + 8-byte double (d) for timestamp
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)
@@ -46,21 +48,18 @@ _status_lock: threading.Lock = threading.Lock()
 # ── Status Polling ───────────────────────────────────────────────────────────
 
 def poll_status(host: str, port: int) -> None:
-    """Periodically query the VM management port for duration and status."""
+    """Periodically query the VM Control API for status."""
     global video_duration, video_status
     while True:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(2.0)
-                sock.connect((host, port))
-                sock.sendall(json.dumps({"command": "status"}).encode("utf-8"))
-                resp = sock.recv(4096)
-                if resp:
-                    data = json.loads(resp.decode("utf-8"))
-                    region = data.get("capture_region", {})
-                    with _status_lock:
-                        video_duration = float(region.get("duration", 0.0))
-                        video_status = region.get("video_status", "playing")
+            url = f"http://{host}:{port}/status"
+            resp = requests.get(url, timeout=2.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                region = data.get("capture_region", {})
+                with _status_lock:
+                    video_duration = float(region.get("duration", 0.0))
+                    video_status = region.get("video_status", "playing")
         except Exception:
             pass
         time.sleep(1.0)
@@ -222,10 +221,10 @@ def main() -> None:
         help="Streaming server port (default: %(default)s)",
     )
     parser.add_argument(
-        "--mgmt-port",
+        "--control-port",
         type=int,
-        default=DEFAULT_MGMT_PORT,
-        help="Management port for status queries (default: %(default)s)",
+        default=DEFAULT_CONTROL_PORT,
+        help="Control API port for status queries (default: %(default)s)",
     )
     parser.add_argument(
         "--auto-close",
@@ -234,7 +233,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    run(args.host, args.port, args.mgmt_port, args.auto_close)
+    run(args.host, args.port, args.control_port, args.auto_close)
 
 
 if __name__ == "__main__":

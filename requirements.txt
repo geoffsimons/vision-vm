@@ -2,3 +2,7 @@ mss
 numpy
 opencv-python
 playwright
+fastapi
+uvicorn
+requests
+websockets
