@@ -33,6 +33,9 @@ class InteractionRequest(BaseModel):
     action: str
     params: Optional[dict] = None
 
+class SeekRequest(BaseModel):
+    time: float
+
 # ── Chrome Controller ────────────────────────────────────────────────────────
 
 class ChromeController:
@@ -120,6 +123,16 @@ class ChromeController:
             })()
             """
             await self.evaluate(script)
+
+    async def seek(self, timestamp: float):
+        script = f"""
+        (function(t) {{
+            const v = document.querySelector('video');
+            if (v) {{ v.currentTime = t; return true; }}
+            return false;
+        }})({timestamp})
+        """
+        return await self.evaluate(script)
 
 chrome = ChromeController()
 
@@ -232,6 +245,14 @@ async def navigate(req: NavigationRequest):
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/browser/seek")
+async def seek(req: SeekRequest):
+    success = await chrome.seek(req.time)
+    if success:
+        return {"status": "ok"}
+    else:
+        raise HTTPException(status_code=404, detail="No video found to seek")
 
 @app.post("/sensor/region")
 async def update_region(req: RegionUpdate):
