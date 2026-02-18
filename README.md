@@ -2,24 +2,24 @@
 
 Vision VM is a specialized, headless Linux "sensor" optimized for high-frequency frame capture and real-time computer vision (CV) telemetry. It encapsulates a virtual display, an automated browser, and a high-performance streaming engine into a single, autonomous unit.
 
-Designed to function as a "dumb actuator" within a larger "Vision-VM + Orchestrator" pattern, it delegates heavy browser manipulation to its internal logic while broadcasting stabilized, frame-accurate telemetry to a centralized "brain" (such as a Slot Engine).
+Designed to function as a decoupled actuator within a "Vision-VM + Orchestrator" pattern, it handles the complexities of browser automation and environment stabilization while broadcasting high-fidelity telemetry to a centralized "brain" (such as a Slot Engine).
 
 ---
 
 ## Key Features
 
-- **Autonomous ROI Detection:** Automatically detects video players and stabilizes "theater-mode" regions to ensure consistent frame alignment without external calibration.
+- **Autonomous ROI Detection & Stabilization:** Automatically detects video players and enforces "theater-mode" regions to ensure consistent frame alignment without external calibration or manual ROI management.
 - **Dual-Protocol Broadcast:**
-  - **Binary Stream (Port 5555):** Real-time, lossless PNG-over-TCP broadcasting with custom `[!Qd]` headers for high-frequency ingestion.
-  - **JSON Control API (Port 8001):** A FastAPI-based interface for browser orchestration and flattened telemetry access.
-- **NaN-Guarded Telemetry:** Resilient telemetry processing that filters out browser-side `NaN` or `Inf` fluctuations to ensure downstream pipeline stability.
-- **Theater Mode Enforcement:** Actively monitors and re-triggers UI states (like YouTube theater mode) to maintain a consistent capture environment.
+  - **Binary Stream (Port 5555):** Real-time, lossless PNG-over-TCP broadcasting. Each frame includes a custom `[!Qd]` header (8-byte length + 8-byte playhead double) for low-latency ingestion.
+  - **JSON Control API (Port 8001):** A modern FastAPI interface for browser orchestration, playback control, and access to "flattened" telemetry.
+- **NaN-Guarded Telemetry:** Resilient telemetry processing that filters out browser-side `NaN` or `Inf` fluctuations, ensuring downstream pipeline stability.
+- **Self-Healing Environment:** Actively monitors and re-triggers UI states (like YouTube theater mode) and handles X11 lock recovery to maintain a persistent capture environment.
 
 ---
 
 ## Architecture & API
 
-Vision VM operates through a multi-port system to ensure isolation of concerns and high-performance telemetry.
+Vision VM operates through a multi-port system to ensure isolation of concerns and high-performance telemetry delivery.
 
 ### Port & Protocol Summary
 
@@ -32,10 +32,10 @@ Vision VM operates through a multi-port system to ensure isolation of concerns a
 
 ### Control API (Port 8001)
 
-The Control API provides a modern REST interface for interacting with the VM and the browser.
+The Control API provides a RESTful interface for interacting with the autonomous VM.
 
 #### `GET /status`
-Returns the current telemetry, capture region, and performance metrics.
+Returns the current stabilized telemetry, capture region, and performance metrics.
 
 **Response Schema:**
 ```json
@@ -59,13 +59,20 @@ Returns the current telemetry, capture region, and performance metrics.
 ```
 
 #### `POST /browser/navigate`
-Navigates the browser to a target URL with optional start time and UI mode.
+Navigates the sensor to a target URL with optional seek time and UI enforcement.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `url` | string | The target URL to load. |
 | `time` | float | (Optional) Seek to this timestamp immediately after load. |
-| `mode` | string | (Optional) Enforcement mode (default: `theater`). |
+| `mode` | string | (Optional) UI enforcement mode (default: `theater`). |
+
+#### `POST /browser/interact`
+Executes playback actuation commands within the browser.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `action` | string | The interaction to perform (`play` or `pause`). |
 
 #### `POST /browser/seek`
 Programmatically jumps to a specific timestamp in the active video.
@@ -73,13 +80,6 @@ Programmatically jumps to a specific timestamp in the active video.
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `time` | float | Target playhead timestamp in seconds. |
-
-#### `POST /browser/interact`
-Executes basic video playback controls (play/pause).
-
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `action` | string | The interaction to perform (`play` or `pause`). |
 
 ### Binary Stream Protocol (Port 5555)
 
@@ -91,14 +91,14 @@ The stream server delivers frames using a length-prefixed binary protocol. Each 
 
 ---
 
-## Why This Exists
+## Technical Rationale (The "Why")
 
 Capturing frame-accurate telemetry from dynamic web content is notoriously difficult. Standard headless browsers suffer from inconsistent frame rates, UI shifts, and heavy resource overhead.
 
 Vision VM solves this by:
-1. **Isolating the Browser:** Running in a dedicated Xvfb environment ensures no host-side UI interference.
+1. **Isolating the Browser:** Running in a dedicated Xvfb environment ensures no host-side UI interference or display contention.
 2. **Flattening Telemetry:** Normalizing volatile browser metadata into a stable, NaN-guarded JSON schema.
-3. **Optimizing Transport:** Using a raw TCP binary stream for frames to bypass the overhead of HTTP/WebSocket for high-frequency CV ingestion.
+3. **Optimizing Transport:** Using a raw TCP binary stream for frames to bypass the overhead of HTTP/WebSocket, enabling stable **16.5+ FPS** ingestion for CV pipelines.
 
 ---
 
@@ -110,16 +110,15 @@ docker compose up --build
 ```
 
 ### 2. Orchestrate Navigation
-Direct the sensor to a specific stream or video:
+Direct the sensor to a target stream:
 ```bash
 # Using the thin client
 python3 remote_controller.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
-### 3. Ingest Telemetry
-Ingest the binary stream or monitor the status API:
+### 3. Verify the Stream
+Verify the high-frequency stream and telemetry overlay:
 ```bash
-# Verify the stream and telemetry overlay
 python3 verify_stream.py
 ```
 
@@ -133,8 +132,8 @@ If the virtual display fails to initialize, clear the X11 lock files:
 ./reset-chrome.sh
 ```
 
-### Performance Optimization
-To maintain the **16.5+ FPS** milestone, ensure the container has sufficient CPU resources. Vision VM is CPU-bound due to the real-time PNG encoding process.
+### Resource Constraints
+Vision VM is CPU-bound due to real-time PNG encoding. Ensure the container has sufficient resources to maintain target FPS.
 
 ---
 
