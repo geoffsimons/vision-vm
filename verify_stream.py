@@ -28,7 +28,7 @@ import requests
 
 DEFAULT_HOST: str = "localhost"
 DEFAULT_PORT: int = 5555
-DEFAULT_CONTROL_PORT: int = 8000
+DEFAULT_CONTROL_PORT: int = 8001
 
 HEADER_FMT: str = "!Qd"  # 8-byte length (Q) + 8-byte double (d) for timestamp
 HEADER_SIZE: int = struct.calcsize(HEADER_FMT)

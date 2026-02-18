@@ -43,6 +43,7 @@ class ChromeController:
         self.base_url = f"http://{cdp_host}:{cdp_port}"
         self.cdp_host = cdp_host
         self.cdp_port = cdp_port
+        self.target_mode: Optional[str] = "theater"
 
     def _get_tabs(self):
         try:
@@ -71,7 +72,7 @@ class ChromeController:
             # Create new tab
             resp = requests.get(f"{self.base_url}/json/new?url={url}")
             return resp.json()
-        
+
         # Navigate first tab
         tab_id = tabs[0]["id"]
         return await self._send_cdp_command(tab_id, "Page.navigate", {"url": url})
@@ -83,27 +84,103 @@ class ChromeController:
         tab_id = tabs[0]["id"]
         return await self._send_cdp_command(tab_id, "Runtime.evaluate", {"expression": script})
 
+    async def evaluate(self, script: str):
+        tabs = self._get_tabs()
+        if not tabs:
+            return None
+        tab_id = tabs[0]["id"]
+        resp = await self._send_cdp_command(tab_id, "Runtime.evaluate", {
+            "expression": script,
+            "returnByValue": True
+        })
+        if "result" in resp and "result" in resp["result"]:
+            return resp["result"]["result"].get("value")
+        return None
+
     async def set_mode(self, mode: str):
+        self.target_mode = mode
         if mode == "theater":
-            # Press 't' key
+            # Press 't' key or click theater button
             script = """
             (function() {
-                const player = document.querySelector('#movie_player');
-                if (player) {
-                    const e = new KeyboardEvent('keydown', {
-                        key: 't',
-                        code: 'KeyT',
-                        keyCode: 84,
-                        which: 84,
-                        bubbles: true
-                    });
-                    player.dispatchEvent(e);
+                const theaterBtn = document.querySelector('.ytp-size-button');
+                if (theaterBtn) {
+                    theaterBtn.click();
+                } else {
+                    const player = document.querySelector('#movie_player');
+                    if (player) {
+                        const e = new KeyboardEvent('keydown', {
+                            key: 't',
+                            code: 'KeyT',
+                            keyCode: 84,
+                            which: 84,
+                            bubbles: true
+                        });
+                        player.dispatchEvent(e);
+                    }
                 }
             })()
             """
             await self.inject_js(script)
 
 chrome = ChromeController()
+
+# ── Background Tasks ─────────────────────────────────────────────────────────
+
+async def monitor_playback():
+    """Background loop to poll video telemetry and enforce UI states."""
+    print("[MONITOR] Starting background telemetry loop...")
+    while True:
+        try:
+            # Combined telemetry and UI state script
+            script = """
+            (function() {
+                const v = document.querySelector('video');
+                const watchFlexy = document.querySelector('ytd-watch-flexy');
+                const isWatch = !!watchFlexy;
+
+                const data = {
+                    is_watch_page: is_watch,
+                    theater: isWatch ? watchFlexy.hasAttribute('theater') : false,
+                    player_ready: !!document.querySelector('.html5-video-player')
+                };
+
+                if (v) {
+                    data.time = v.currentTime;
+                    data.duration = v.duration;
+                    data.paused = v.paused;
+                    data.ended = v.ended;
+                }
+                return data;
+            })()
+            """
+            status = await chrome.evaluate(script)
+
+            if status:
+                # 1. Update Telemetry
+                if "time" in status:
+                    with streaming_server.region_lock:
+                        streaming_server.capture_region["current_time"] = status["time"]
+                        streaming_server.capture_region["duration"] = status.get("duration", 0.0)
+                        streaming_server.capture_region["is_ended"] = status.get("ended", False)
+                        streaming_server.capture_region["video_status"] = "paused" if status.get("paused") else "playing"
+
+                # 2. Enforce Theater Mode
+                if chrome.target_mode == "theater" and status.get("is_watch_page"):
+                    if not status.get("theater") and status.get("player_ready"):
+                        print("[MONITOR] Theater mode lost – re-triggering...")
+                        await chrome.set_mode("theater")
+
+        except Exception as e:
+            # Don't spam logs if it's just a transient connection error during startup/refresh
+            if "websockets" not in str(e).lower():
+                print(f"[MONITOR] Loop error: {e}")
+
+        await asyncio.sleep(0.5)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(monitor_playback())
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
@@ -144,13 +221,13 @@ async def navigate(req: NavigationRequest):
 async def update_region(req: RegionUpdate):
     if req.width <= 0 or req.height <= 0:
         raise HTTPException(status_code=400, detail="Invalid dimensions")
-    
+
     with streaming_server.region_lock:
         streaming_server.capture_region["top"] = req.top
         streaming_server.capture_region["left"] = req.left
         streaming_server.capture_region["width"] = req.width
         streaming_server.capture_region["height"] = req.height
-    
+
     return {"status": "ok"}
 
 @app.post("/sensor/telemetry")

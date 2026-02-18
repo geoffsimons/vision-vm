@@ -26,7 +26,7 @@ DEFAULT_WIDTH: int = 1280
 DEFAULT_HEIGHT: int = 720
 
 VM_HOST: str = "localhost"
-CONTROL_PORT: int = 8000
+CONTROL_PORT: int = 8001
 
 
 # ── Core helpers ─────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ def load_video(url: str, browser: Optional[Browser] = None) -> Page:
         match = re.search(r"[?&]t=(\d+)", url)
         if match:
             t_start = int(match.group(1))
-    
+
     if t_start > 0:
         print(f"[CTRL] Resuming video from {t_start}s", flush=True)
 
@@ -440,11 +440,11 @@ def monitor_playback(
             v_time = float(telemetry.get("time", 0.0))
             v_ended = bool(telemetry.get("ended", False))
             v_duration = float(telemetry.get("duration", 0.0))
-            
+
             if v_duration > 0 and v_time >= (v_duration - 1.0) and video_status != "complete":
                 print(f"[MONITOR] Near end of video ({v_time:.2f}/{v_duration:.2f}).", flush=True)
                 video_status = "complete"
-            
+
             if v_ended and video_status != "complete":
                 video_status = "complete"
 
