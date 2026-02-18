@@ -124,7 +124,14 @@ async def get_status():
 @app.post("/browser/navigate")
 async def navigate(req: NavigationRequest):
     try:
-        await chrome.navigate(req.url)
+        final_url = req.url
+        if req.time is not None and req.time > 0:
+            # Check if URL already has query parameters
+            separator = "&" if "?" in final_url else "?"
+            # Append YouTube style timestamp (t=X)
+            final_url = f"{final_url}{separator}t={int(req.time)}"
+
+        await chrome.navigate(final_url)
         if req.mode:
             # Wait a bit for page load
             await asyncio.sleep(2)
