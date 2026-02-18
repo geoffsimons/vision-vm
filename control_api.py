@@ -192,10 +192,14 @@ async def monitor_playback():
                 # 1. Update Telemetry & ROI
                 with streaming_server.region_lock:
                     if "time" in status:
-                        streaming_server.capture_region["current_time"] = sanitize_float(status["time"])
-                        streaming_server.capture_region["duration"] = sanitize_float(status.get("duration", 0.0))
-                        streaming_server.capture_region["is_ended"] = status.get("ended", False)
-                        streaming_server.capture_region["video_status"] = "paused" if status.get("paused") else "playing"
+                        streaming_server.video_telemetry["current_time"] = sanitize_float(status["time"])
+                        streaming_server.video_telemetry["duration"] = sanitize_float(status.get("duration", 0.0))
+                        streaming_server.video_telemetry["is_ended"] = status.get("ended", False)
+                        
+                        if status.get("ended"):
+                            streaming_server.video_telemetry["status"] = "complete"
+                        else:
+                            streaming_server.video_telemetry["status"] = "paused" if status.get("paused") else "playing"
 
                     # Auto-detect ROI
                     rect = status.get("rect")
@@ -232,11 +236,13 @@ async def startup_event():
 async def get_status():
     with streaming_server.region_lock:
         region = dict(streaming_server.capture_region)
+        video = dict(streaming_server.video_telemetry)
     with streaming_server.stats_lock:
         fps = sanitize_float(streaming_server.current_fps)
         clients = streaming_server.active_clients
     return {
         "status": "ok",
+        "video": video,
         "capture_region": region,
         "fps": fps,
         "active_clients": clients
@@ -283,12 +289,12 @@ async def update_region(req: RegionUpdate):
 @app.post("/sensor/telemetry")
 async def update_telemetry(req: TelemetryUpdate):
     with streaming_server.region_lock:
-        streaming_server.capture_region["current_time"] = sanitize_float(req.current_time)
-        streaming_server.capture_region["is_ended"] = req.is_ended
+        streaming_server.video_telemetry["current_time"] = sanitize_float(req.current_time)
+        streaming_server.video_telemetry["is_ended"] = req.is_ended
         if req.video_status:
-            streaming_server.capture_region["video_status"] = req.video_status
+            streaming_server.video_telemetry["status"] = req.video_status
         if req.duration is not None:
-            streaming_server.capture_region["duration"] = sanitize_float(req.duration)
+            streaming_server.video_telemetry["duration"] = sanitize_float(req.duration)
     return {"status": "ok"}
 
 @app.post("/browser/interact")

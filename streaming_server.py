@@ -46,10 +46,12 @@ capture_region: Dict[str, any] = {
     "left": 0,
     "width": 1280,
     "height": 720,
+}
+video_telemetry: Dict[str, any] = {
     "current_time": 0.0,
     "duration": 0.0,
     "is_ended": False,
-    "video_status": "playing",
+    "status": "playing",
 }
 region_lock: threading.Lock = threading.Lock()
 _last_roi_log: float = 0.0
@@ -145,7 +147,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     continue
 
                 with region_lock:
-                    v_time = capture_region["current_time"]
+                    v_time = video_telemetry["current_time"]
 
                 header: bytes = struct.pack(HEADER_FMT, len(png_data), v_time)
                 conn.sendall(header + png_data)

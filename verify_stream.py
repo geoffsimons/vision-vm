@@ -56,10 +56,10 @@ def poll_status(host: str, port: int) -> None:
             resp = requests.get(url, timeout=2.0)
             if resp.status_code == 200:
                 data = resp.json()
-                region = data.get("capture_region", {})
+                video = data.get("video", {})
                 with _status_lock:
-                    video_duration = float(region.get("duration", 0.0))
-                    video_status = region.get("video_status", "playing")
+                    video_duration = float(video.get("duration", 0.0))
+                    video_status = video.get("status", "playing")
         except Exception:
             pass
         time.sleep(1.0)

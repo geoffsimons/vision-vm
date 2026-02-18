@@ -70,12 +70,13 @@ def main():
         status = get_status(args.host, args.port)
         if status:
             region = status.get("capture_region", {})
+            video = status.get("video", {})
             print(f"VM STATUS: {status.get('status')}")
             print(f"  FPS: {status.get('fps', 0.0):.1f}")
             print(f"  Clients: {status.get('active_clients', 0)}")
             print(f"  ROI: {region.get('left')},{region.get('top')} {region.get('width')}x{region.get('height')}")
-            print(f"  Time: {region.get('current_time', 0.0):.2f}s / {region.get('duration', 0.0):.2f}s")
-            print(f"  State: {region.get('video_status', 'unknown')}")
+            print(f"  Time: {video.get('current_time', 0.0):.2f}s / {video.get('duration', 0.0):.2f}s")
+            print(f"  State: {video.get('status', 'unknown')}")
         return
 
     if args.reset:
