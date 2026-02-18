@@ -26,3 +26,9 @@ Responsibility for continuous video telemetry polling and UI state enforcement w
 
 ## Playwright Async API for Internal CDP Control
 Chrome DevTools Protocol (CDP) interactions within the VM's `control_api.py` were refactored to directly utilize Playwright's asynchronous API. This simplifies CDP integration, improves connection management robustness, and leverages Playwright's higher-level abstractions for browser control.
+
+## Thin Client Architecture for Remote Controller
+The `remote_controller.py` has been refactored from a Playwright-heavy orchestrator to a thin CLI client that exclusively interacts with the VM's Control API via HTTP. This design simplifies the host-side client, reduces its dependencies, and fully delegates browser automation and continuous monitoring responsibilities to the autonomous VM.
+
+## Autonomous Region-of-Interest (ROI) Detection
+The mechanism for detecting and updating the Region-of-Interest (ROI) was moved into the VM's `control_api.py`. The VM now autonomously queries the video player's bounding box and updates its internal `capture_region` without external intervention from the host controller. This ensures real-time adaptation to layout changes and further reduces host-side complexity.
