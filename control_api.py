@@ -1,13 +1,10 @@
 import asyncio
-import json
 import os
-import threading
 from typing import Dict, Optional
 
-import requests
-import websockets
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from playwright.async_api import async_playwright, Page, Browser, Error as PlaywrightError
 
 import streaming_server
 
@@ -39,68 +36,69 @@ class InteractionRequest(BaseModel):
 # ── Chrome Controller ────────────────────────────────────────────────────────
 
 class ChromeController:
-    def __init__(self, cdp_host: str = "localhost", cdp_port: int = 9223):
-        self.base_url = f"http://{cdp_host}:{cdp_port}"
-        self.cdp_host = cdp_host
-        self.cdp_port = cdp_port
+    def __init__(self, cdp_url: str = "http://localhost:9222"):
+        self.cdp_url = cdp_url
+        self.playwright = None
+        self.browser: Optional[Browser] = None
+        self.page: Optional[Page] = None
         self.target_mode: Optional[str] = "theater"
+        self._lock = asyncio.Lock()
 
-    def _get_tabs(self):
-        try:
-            resp = requests.get(f"{self.base_url}/json/list")
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            print(f"[CDP] Error listing tabs: {e}")
-            return []
+    async def start(self):
+        """Initialize Playwright and connect to the existing Chrome instance."""
+        async with self._lock:
+            if self.page and self.browser and self.browser.is_connected():
+                return
 
-    async def _send_cdp_command(self, tab_id: str, method: str, params: dict):
-        ws_url = f"ws://{self.cdp_host}:{self.cdp_port}/devtools/page/{tab_id}"
-        async with websockets.connect(ws_url) as ws:
-            command = {
-                "id": 1,
-                "method": method,
-                "params": params
-            }
-            await ws.send(json.dumps(command))
-            resp = await ws.recv()
-            return json.loads(resp)
+            try:
+                if not self.playwright:
+                    self.playwright = await async_playwright().start()
 
-    async def navigate(self, url: str):
-        tabs = self._get_tabs()
-        if not tabs:
-            # Create new tab
-            resp = requests.get(f"{self.base_url}/json/new?url={url}")
-            return resp.json()
+                print(f"[CDP] Connecting to {self.cdp_url}...", flush=True)
+                self.browser = await self.playwright.chromium.connect_over_cdp(self.cdp_url)
 
-        # Navigate first tab
-        tab_id = tabs[0]["id"]
-        return await self._send_cdp_command(tab_id, "Page.navigate", {"url": url})
+                # Attach to the first available context and page
+                if self.browser.contexts:
+                    context = self.browser.contexts[0]
+                    self.page = context.pages[0] if context.pages else await context.new_page()
+                else:
+                    context = await self.browser.new_context()
+                    self.page = await context.new_page()
 
-    async def inject_js(self, script: str):
-        tabs = self._get_tabs()
-        if not tabs:
-            return None
-        tab_id = tabs[0]["id"]
-        return await self._send_cdp_command(tab_id, "Runtime.evaluate", {"expression": script})
+                print("[CDP] Connected to Chrome via Playwright", flush=True)
+            except Exception as e:
+                print(f"[CDP] Connection failed: {e}", flush=True)
+                self.page = None
+                self.browser = None
+
+    async def ensure_connected(self):
+        if not self.page or not self.browser or not self.browser.is_connected():
+            await self.start()
 
     async def evaluate(self, script: str):
-        tabs = self._get_tabs()
-        if not tabs:
+        await self.ensure_connected()
+        if not self.page:
             return None
-        tab_id = tabs[0]["id"]
-        resp = await self._send_cdp_command(tab_id, "Runtime.evaluate", {
-            "expression": script,
-            "returnByValue": True
-        })
-        if "result" in resp and "result" in resp["result"]:
-            return resp["result"]["result"].get("value")
-        return None
+        try:
+            return await self.page.evaluate(script)
+        except PlaywrightError as e:
+            print(f"[CDP] Evaluate error: {e}", flush=True)
+            return None
+        except Exception:
+            return None
+
+    async def navigate(self, url: str):
+        await self.ensure_connected()
+        if not self.page:
+            raise Exception("Browser not connected")
+        try:
+            await self.page.goto(url, wait_until="networkidle")
+        except PlaywrightError as e:
+            print(f"[CDP] Navigation error: {e}", flush=True)
 
     async def set_mode(self, mode: str):
         self.target_mode = mode
         if mode == "theater":
-            # Press 't' key or click theater button
             script = """
             (function() {
                 const theaterBtn = document.querySelector('.ytp-size-button');
@@ -121,7 +119,7 @@ class ChromeController:
                 }
             })()
             """
-            await self.inject_js(script)
+            await self.evaluate(script)
 
 chrome = ChromeController()
 
@@ -140,7 +138,7 @@ async def monitor_playback():
                 const isWatch = !!watchFlexy;
 
                 const data = {
-                    is_watch_page: is_watch,
+                    is_watch_page: isWatch,
                     theater: isWatch ? watchFlexy.hasAttribute('theater') : false,
                     player_ready: !!document.querySelector('.html5-video-player')
                 };
@@ -154,6 +152,7 @@ async def monitor_playback():
                 return data;
             })()
             """
+
             status = await chrome.evaluate(script)
 
             if status:
@@ -171,15 +170,18 @@ async def monitor_playback():
                         print("[MONITOR] Theater mode lost – re-triggering...")
                         await chrome.set_mode("theater")
 
+        except PlaywrightError as e:
+            print(f"[MONITOR] Playwright error: {e}")
+            # Potential browser crash or disconnect – attempt to reconnect on next loop
+            chrome.page = None
         except Exception as e:
-            # Don't spam logs if it's just a transient connection error during startup/refresh
-            if "websockets" not in str(e).lower():
-                print(f"[MONITOR] Loop error: {e}")
+            print(f"[MONITOR] Loop error: {e}")
 
         await asyncio.sleep(0.5)
 
 @app.on_event("startup")
 async def startup_event():
+    await chrome.start()
     asyncio.create_task(monitor_playback())
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -203,9 +205,7 @@ async def navigate(req: NavigationRequest):
     try:
         final_url = req.url
         if req.time is not None and req.time > 0:
-            # Check if URL already has query parameters
             separator = "&" if "?" in final_url else "?"
-            # Append YouTube style timestamp (t=X)
             final_url = f"{final_url}{separator}t={int(req.time)}"
 
         await chrome.navigate(final_url)
