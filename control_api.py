@@ -130,7 +130,7 @@ async def monitor_playback():
     print("[MONITOR] Starting background telemetry loop...")
     while True:
         try:
-            # Combined telemetry and UI state script
+            # Combined telemetry, UI state, and ROI detection script
             script = """
             (function() {
                 const v = document.querySelector('video');
@@ -148,23 +148,39 @@ async def monitor_playback():
                     data.duration = v.duration;
                     data.paused = v.paused;
                     data.ended = v.ended;
+
+                    const r = v.getBoundingClientRect();
+                    data.rect = {
+                        top: Math.round(r.top),
+                        left: Math.round(r.left),
+                        width: Math.round(r.width),
+                        height: Math.round(r.height)
+                    };
                 }
                 return data;
             })()
             """
-
             status = await chrome.evaluate(script)
 
             if status:
-                # 1. Update Telemetry
-                if "time" in status:
-                    with streaming_server.region_lock:
+                # 1. Update Telemetry & ROI
+                with streaming_server.region_lock:
+                    if "time" in status:
                         streaming_server.capture_region["current_time"] = status["time"]
                         streaming_server.capture_region["duration"] = status.get("duration", 0.0)
                         streaming_server.capture_region["is_ended"] = status.get("ended", False)
                         streaming_server.capture_region["video_status"] = "paused" if status.get("paused") else "playing"
 
+                    # Auto-detect ROI
+                    rect = status.get("rect")
+                    if rect and rect["width"] > 50 and rect["height"] > 50:
+                        streaming_server.capture_region["top"] = rect["top"]
+                        streaming_server.capture_region["left"] = rect["left"]
+                        streaming_server.capture_region["width"] = rect["width"]
+                        streaming_server.capture_region["height"] = rect["height"]
+
                 # 2. Enforce Theater Mode
+
                 if chrome.target_mode == "theater" and status.get("is_watch_page"):
                     if not status.get("theater") and status.get("player_ready"):
                         print("[MONITOR] Theater mode lost – re-triggering...")
