@@ -1,6 +1,19 @@
 # Vision VM
 
-Vision VM is a headless Linux environment optimized for high-frequency frame capture and computer vision analysis. It runs Google Chrome in a virtual display, providing a lossless PNG stream and a robust control API.
+Vision VM is a specialized, headless Linux "sensor" optimized for high-frequency frame capture and real-time computer vision (CV) telemetry. It encapsulates a virtual display, an automated browser, and a high-performance streaming engine into a single, autonomous unit.
+
+Designed to function as a "dumb actuator" within a larger "Vision-VM + Orchestrator" pattern, it delegates heavy browser manipulation to its internal logic while broadcasting stabilized, frame-accurate telemetry to a centralized "brain" (such as a Slot Engine).
+
+---
+
+## Key Features
+
+- **Autonomous ROI Detection:** Automatically detects video players and stabilizes "theater-mode" regions to ensure consistent frame alignment without external calibration.
+- **Dual-Protocol Broadcast:**
+  - **Binary Stream (Port 5555):** Real-time, lossless PNG-over-TCP broadcasting with custom `[!Qd]` headers for high-frequency ingestion.
+  - **JSON Control API (Port 8001):** A FastAPI-based interface for browser orchestration and flattened telemetry access.
+- **NaN-Guarded Telemetry:** Resilient telemetry processing that filters out browser-side `NaN` or `Inf` fluctuations to ensure downstream pipeline stability.
+- **Theater Mode Enforcement:** Actively monitors and re-triggers UI states (like YouTube theater mode) to maintain a consistent capture environment.
 
 ---
 
@@ -12,113 +25,109 @@ Vision VM operates through a multi-port system to ensure isolation of concerns a
 
 | Port | Protocol | Component | Role |
 | :--- | :--- | :--- | :--- |
-| **9222** | TCP / CDP | Chrome | Navigation, duration retrieval, and playback control. |
+| **8001** | HTTP / JSON | Control API | Orchestration, ROI management, and status retrieval. |
 | **5555** | TCP / Binary | Stream Server | High-speed, lossless PNG-over-TCP frame delivery. |
-| **5556** | TCP / JSON | Mgmt Server | Command & Control API for telemetry and ROI management. |
+| **9222** | TCP / CDP | Chrome | Direct DevTools access (via `socat` bridge). |
 | **5900** | TCP / RFB | VNC | Visual setup and debugging via Screen Sharing. |
+
+### Control API (Port 8001)
+
+The Control API provides a modern REST interface for interacting with the VM and the browser.
+
+#### `GET /status`
+Returns the current telemetry, capture region, and performance metrics.
+
+**Response Schema:**
+```json
+{
+  "status": "ok",
+  "video": {
+    "current_time": 45.2,
+    "duration": 300.5,
+    "is_ended": false,
+    "status": "playing"
+  },
+  "capture_region": {
+    "top": 48,
+    "left": 0,
+    "width": 1280,
+    "height": 720
+  },
+  "fps": 16.5,
+  "active_clients": 1
+}
+```
+
+#### `POST /browser/navigate`
+Navigates the browser to a target URL with optional start time and UI mode.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `url` | string | The target URL to load. |
+| `time` | float | (Optional) Seek to this timestamp immediately after load. |
+| `mode` | string | (Optional) Enforcement mode (default: `theater`). |
+
+#### `POST /browser/seek`
+Programmatically jumps to a specific timestamp in the active video.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `time` | float | Target playhead timestamp in seconds. |
 
 ### Binary Stream Protocol (Port 5555)
 
 The stream server delivers frames using a length-prefixed binary protocol. Each message consists of a 16-byte header followed by the raw PNG payload.
 
-**Header Format:**
-```python
-# struct format: !Qd
-# !: Big-endian
-# Q: 8-byte unsigned long long (Payload Length)
-# d: 8-byte double (Timestamp/Playhead)
-```
-
-### Management API (Port 5556)
-
-The management API accepts JSON commands and returns the current system and playback state.
-
-**Common Commands:**
-- `status`: Retrieve current ROI, telemetry, and performance metrics.
-- `region_update`: Set the capture bounding box (`top`, `left`, `width`, `height`).
-- `set_duration`: Push the video duration discovered via CDP.
-- `update_telemetry`: Sync the current playhead and video status.
-
-**Status Response Schema:**
-```json
-{
-  "status": "ok",
-  "capture_region": {
-    "top": 0,
-    "left": 0,
-    "width": 1280,
-    "height": 720,
-    "current_time": 45.2,
-    "duration": 300.5,
-    "is_ended": false,
-    "video_status": "playing"
-  },
-  "fps": 30.1,
-  "active_clients": 1
-}
-```
+**Header Format (`!Qd`):**
+1. **Payload Length (8 bytes):** Unsigned 64-bit big-endian integer.
+2. **Playhead Timestamp (8 bytes):** 64-bit big-endian double representing the current video time.
 
 ---
 
-## Playback Lifecycle
+## Why This Exists
 
-To ensure clean-exit transitions and accurate CV analysis, clients should adhere to the following lifecycle:
+Capturing frame-accurate telemetry from dynamic web content is notoriously difficult. Standard headless browsers suffer from inconsistent frame rates, UI shifts, and heavy resource overhead.
 
-1.  **Load:** Navigate the browser to the target URL. Append `&t=0` (or a specific checkpoint) to ensure idempotent start times.
-2.  **Sync:** Once the page is loaded, query `document.querySelector("video").duration` via CDP (Port 9222) and push the value to the Management API (Port 5556) using `set_duration`.
-3.  **Monitor:** Ingest frames from the Binary Stream (Port 5555). Compare the frame's playhead timestamp against the total duration retrieved in step 2.
-4.  **Exit:** When `currentTime >= (duration - 1.0)`, trigger a `pause()` command via CDP and update the VM status to `complete` via Port 5556. This allows orchestrators to transition safely before the video ends or redirects.
+Vision VM solves this by:
+1. **Isolating the Browser:** Running in a dedicated Xvfb environment ensures no host-side UI interference.
+2. **Flattening Telemetry:** Normalizing volatile browser metadata into a stable, NaN-guarded JSON schema.
+3. **Optimizing Transport:** Using a raw TCP binary stream for frames to bypass the overhead of HTTP/WebSocket for high-frequency CV ingestion.
 
 ---
 
 ## Quick Start
 
-### 1. Launch the VM
+### 1. Launch the Sensor
 ```bash
 docker compose up --build
 ```
 
-### 2. Health Check
-Verify the management API is responsive:
+### 2. Orchestrate Navigation
+Direct the sensor to a specific stream or video:
 ```bash
-python3 remote_controller.py --ping
-```
-
-### 3. Control Browser
-Navigate to a specific URL and start the monitoring watchdog:
-```bash
+# Using the thin client
 python3 remote_controller.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
-### 4. Verify Stream
-Visualize the incoming frame stream with telemetry overlay:
+### 3. Ingest Telemetry
+Ingest the binary stream or monitor the status API:
 ```bash
-python3 verify_stream.py --auto-close
+# Verify the stream and telemetry overlay
+python3 verify_stream.py
 ```
-
----
-
-## Operational Decisions
-
-*   **State-Slave Model:** The VM acts as a **Passive Sensor**. It broadcasts state and frames, while the client (Slave) manages synchronization and processing intensity.
-*   **ROI Persistence:** Region of Interest settings are handled via the Mgmt API and persist across sessions to ensure consistent CV analysis targets without re-calibration.
 
 ---
 
 ## Troubleshooting
 
 ### X11 Lock Errors
-If you see `Fatal server error: Server is already active for display 99`, run the reset script:
+If the virtual display fails to initialize, clear the X11 lock files:
 ```bash
 ./reset-chrome.sh
 ```
 
-### Port 5556 Connection Refused
-Ensure the `streaming_server.py` is fully initialized. Check logs:
-```bash
-docker compose logs streaming_server
-```
-If the issue persists, verify that the `socat` bridge or the Python process hasn't exited prematurely.
+### Performance Optimization
+To maintain the **16.5+ FPS** milestone, ensure the container has sufficient CPU resources. Vision VM is CPU-bound due to the real-time PNG encoding process.
 
 ---
 
