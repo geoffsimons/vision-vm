@@ -17,3 +17,12 @@ The system supports dynamic, client-controlled ROI for frame capture. These coor
 
 ## End-to-End Video Playback Telemetry
 The system now incorporates comprehensive telemetry for video playback, including current playhead time, total duration, and playback status (playing/complete). This telemetry is synchronized from the `remote_controller.py` to the `streaming_server.py` and embedded in each streamed frame, enabling downstream computer vision analysis to precisely correlate visual events with the video timeline and react to playback lifecycle events. This also facilitates client-side features like auto-closing on video completion.
+
+## FastAPI for VM Control API
+The VM's command and control interface was refactored from a custom raw TCP server to a FastAPI-based HTTP API (Port 8000). This provides a modern, RESTful interface with automatic documentation, data validation, and built-in asynchronous capabilities, simplifying client interaction and enhancing extensibility.
+
+## Autonomous VM for Continuous Monitoring
+Responsibility for continuous video telemetry polling and UI state enforcement was shifted from the host-based `remote_controller.py` to the VM's `control_api.py`. This makes the VM largely autonomous in maintaining its desired state, reducing host controller complexity, network chatter, and improving responsiveness.
+
+## Playwright Async API for Internal CDP Control
+Chrome DevTools Protocol (CDP) interactions within the VM's `control_api.py` were refactored to directly utilize Playwright's asynchronous API. This simplifies CDP integration, improves connection management robustness, and leverages Playwright's higher-level abstractions for browser control.
