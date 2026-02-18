@@ -32,3 +32,6 @@ The `remote_controller.py` has been refactored from a Playwright-heavy orchestra
 
 ## Autonomous Region-of-Interest (ROI) Detection
 The mechanism for detecting and updating the Region-of-Interest (ROI) was moved into the VM's `control_api.py`. The VM now autonomously queries the video player's bounding box and updates its internal `capture_region` without external intervention from the host controller. This ensures real-time adaptation to layout changes and further reduces host-side complexity.
+
+## Separation of ROI and Video Telemetry Data Models
+The global state within `streaming_server.py` and its exposure via the Control API were refactored to explicitly separate Region-of-Interest (ROI) coordinates from video playback telemetry. This decision enhances data model clarity, improves API readability, and reduces potential side effects by ensuring distinct concerns are handled by distinct data structures.
